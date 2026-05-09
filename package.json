@@ -4,7 +4,12 @@
   "description": "Minimal Node.js dashboard prototype",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "dev": "vite",
+    "dev:app": "tsx server.ts",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node server.js",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.52.0",
