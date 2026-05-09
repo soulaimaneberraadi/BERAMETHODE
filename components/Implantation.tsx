@@ -128,6 +128,7 @@ interface ImplantationProps {
     // Manual Links State (Passed from Parent for Persistence)
     manualLinks?: ManualLink[];
     setManualLinks?: React.Dispatch<React.SetStateAction<ManualLink[]>>;
+    readOnly?: boolean;
 }
 
 const GROUP_COLORS = [
@@ -532,7 +533,8 @@ export default function Implantation({
     fabricSettings,
     onSave,
     manualLinks, // Receive manualLinks as prop
-    setManualLinks // Receive setManualLinks as prop
+    setManualLinks, // Receive setManualLinks as prop
+    readOnly
 }: ImplantationProps) {
 
     // --- CALCULATIONS FOR HEADER ---
@@ -992,7 +994,7 @@ export default function Implantation({
                     <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 30px;">
                         <div style="display: flex; align-items: center; gap: 15px;">
                             <div style="background-color: #1e293b; color: white; padding: 10px 20px; border-radius: 8px; font-weight: bold; font-size: 24px; font-family: sans-serif;">
-                                MBERATEX
+                                BERAMETHODE
                             </div>
                             <div>
                                 <h1 style="margin: 0; color: #334155; font-family: sans-serif; font-size: 28px;">Plan d'Implantation</h1>
@@ -1212,6 +1214,7 @@ export default function Implantation({
     }, []);
 
     const handleContextMenu = (e: React.MouseEvent, station: Workstation) => {
+        if (readOnly) return;
         e.preventDefault();
         e.stopPropagation();
         setContextMenu({
@@ -1260,6 +1263,7 @@ export default function Implantation({
     };
 
     const handleFreeContextMenu = (e: React.MouseEvent) => {
+        if (readOnly) return;
         if (layoutType !== 'free') return;
         e.preventDefault();
 
@@ -1299,6 +1303,7 @@ export default function Implantation({
 
     // --- MOUSE & TOUCH HANDLERS FOR FREE MODE (DRAGGING ITEMS) ---
     const handleFreeStart = (e: React.MouseEvent | React.TouchEvent, id: string, currentX: number, currentY: number) => {
+        if (readOnly) return;
         if (isSpacePressed) return; // Allow panning instead of dragging items if space is pressed
 
         if (e.type === 'mousedown' && (e as React.MouseEvent).button !== 0) return;
@@ -1455,6 +1460,7 @@ export default function Implantation({
     };
 
     const handleLinkClick = (stationId: string) => {
+        if (readOnly) return;
         if (!isLinking || !setManualLinks || !manualLinks) return;
 
         if (!linkSource) {
@@ -2299,13 +2305,6 @@ export default function Implantation({
                                     <X className="w-3 h-3" />
                                 </button>
                             )}
-                            <button
-                                onMouseDown={(e) => e.stopPropagation()}
-                                onClick={(e) => handleContextMenu(e, station)}
-                                className="p-1 rounded-md bg-white/20 hover:bg-white/40 text-current transition-colors"
-                            >
-                                <MoreVertical className="w-3 h-3" />
-                            </button>
                         </div>
                     )}
 
@@ -2316,8 +2315,8 @@ export default function Implantation({
 
     return (
         <div className="flex flex-col h-full gap-2 relative">
-            {/* ... (Header Stats - UNCHANGED) ... */}
-            <div className="bg-slate-50/80 rounded-xl border-2 border-slate-200 shadow-sm mb-2 p-2 flex flex-nowrap items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
+            {/* ... (Header Stats - Hidden in ReadOnly) ... */}
+            {!readOnly && (<div className="bg-slate-50/80 rounded-xl border-2 border-slate-200 shadow-sm mb-2 p-2 flex flex-nowrap items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
                 {/* OUVRIERS / HEURES */}
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-lg border border-slate-100 shrink-0">
                     <div className="flex flex-col items-center border-r border-slate-200 pr-3 mr-3">
@@ -2409,7 +2408,7 @@ export default function Implantation({
                         <span className="font-black text-purple-700 text-xl leading-none">{tempsArticle.toFixed(2)}</span>
                     </div>
                 </div>
-            </div>
+            </div>)}
 
             {/* FULLSCREEN WRAPPER */}
             <div ref={fullscreenWrapperRef} className={`flex flex-col flex-1 min-h-0 w-full h-full relative transition-[background-color] duration-500 ${isFullScreen ? 'bg-[#F8FAFC]' : 'bg-transparent'}`}>
@@ -2417,171 +2416,174 @@ export default function Implantation({
 
 
 
-                    {/* TOOLBAR */}
-                    <div className="bg-slate-50/80 rounded-2xl border-2 border-slate-200 shadow-sm p-2.5 flex flex-wrap items-center gap-2 shrink-0 z-30 mb-2 mt-4 relative">
-
-                        {/* Mode Toggle */}
-                        <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                            <button onClick={activateAutoMode} className={`flex items-center justify-center px-3 py-1.5 rounded-md font-bold transition-all text-xs ${!isManualMode ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
-                                Auto
-                            </button>
-                            <button onClick={activateManualMode} className={`flex items-center justify-center px-3 py-1.5 rounded-md font-bold transition-all text-xs ${isManualMode ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
-                                Manuel
-                            </button>
-                        </div>
-
-                        <div className="w-px h-7 bg-slate-200" />
-
-                        {/* Layout Picker */}
-                        <div className="flex items-center gap-0.5 bg-slate-50 p-0.5 rounded-lg border border-slate-200">
-                            {[
-                                { id: 'line', label: '2 Lignes', icon: Columns },
-                                { id: 'double-zigzag', label: 'Zigzag', icon: ArrowLeftRight },
-                                ...(isManualMode ? [{ id: 'free', label: 'Libre', icon: Move }] : []),
-                            ].map((item) => (
-                                <button key={item.id} onClick={() => handleLayoutChange(item.id as any)} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap ${layoutType === item.id ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-indigo-600'}`}>
-                                    <item.icon className="w-3.5 h-3.5" />
-                                    <span className="hidden xl:inline">{item.label}</span>
-                                </button>
-                            ))}
-                        </div>
-
-                        <div className="w-px h-7 bg-slate-200" />
-
-                        {/* Zoom Controls */}
-                        <div className="flex items-center gap-0.5 bg-slate-50 p-0.5 rounded-lg border border-slate-200">
-                            <button onClick={() => setZoom(z => Math.max(0.3, z - 0.1))} className="p-1.5 text-slate-500 hover:text-indigo-600 rounded-md hover:bg-slate-100 transition-colors" title="Zoom -"><ZoomOut className="w-3.5 h-3.5" /></button>
-                            <button onClick={() => setZoom(1)} className="px-2 py-1 text-[10px] font-black text-slate-600 hover:text-indigo-600 rounded-md hover:bg-slate-100 transition-colors min-w-[40px] text-center" title="Réinitialiser Zoom">{Math.round(zoom * 100)}%</button>
-                            <button onClick={() => setZoom(z => Math.min(2, z + 0.1))} className="p-1.5 text-slate-500 hover:text-indigo-600 rounded-md hover:bg-slate-100 transition-colors" title="Zoom +"><ZoomIn className="w-3.5 h-3.5" /></button>
-                        </div>
-
-                        {/* Free Mode Tools */}
-                        {isManualMode && layoutType === 'free' && (
-                            <>
-                                <div className="w-px h-7 bg-slate-200" />
-                                <div className="flex items-center gap-0.5 bg-violet-50 p-0.5 rounded-lg border border-violet-200">
-                                    <button onClick={() => applyLayoutPattern('U')} className="p-1.5 rounded-md text-violet-600 hover:bg-slate-100 transition-colors" title="Disposition U"><Columns className="w-3.5 h-3.5" /></button>
-                                    <button onClick={() => applyLayoutPattern('GRID')} className="p-1.5 rounded-md text-violet-600 hover:bg-slate-100 transition-colors" title="Grille"><LayoutGrid className="w-3.5 h-3.5" /></button>
-                                    <button onClick={() => applyLayoutPattern('CIRCLE')} className="p-1.5 rounded-md text-violet-600 hover:bg-slate-100 transition-colors" title="Cercle"><CircleDashed className="w-3.5 h-3.5" /></button>
-                                    <button onClick={() => applyLayoutPattern('LINE')} className="p-1.5 rounded-md text-violet-600 hover:bg-slate-100 transition-colors" title="Ligne droite"><ArrowRight className="w-3.5 h-3.5" /></button>
+                    {/* TOOLBAR & CONTROLS (Hidden in ReadOnly) */}
+                    {!readOnly && (
+                        <>
+                            <div className="bg-slate-50/80 rounded-2xl border-2 border-slate-200 shadow-sm p-2.5 flex flex-wrap items-center gap-2 shrink-0 z-30 mb-2 mt-4 relative">
+                                {/* Mode Toggle */}
+                                <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                                    <button onClick={activateAutoMode} className={`flex items-center justify-center px-3 py-1.5 rounded-md font-bold transition-all text-xs ${!isManualMode ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+                                        Auto
+                                    </button>
+                                    <button onClick={activateManualMode} className={`flex items-center justify-center px-3 py-1.5 rounded-md font-bold transition-all text-xs ${isManualMode ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>
+                                        Manuel
+                                    </button>
                                 </div>
-                            </>
-                        )}
 
-                        {/* Station Counter Badge */}
-                        <div className="w-px h-7 bg-slate-200" />
-                        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-200 text-[10px] font-black text-slate-500 uppercase tracking-wide">
-                            <Layers className="w-3.5 h-3.5" />
-                            <span className="text-indigo-600">{workstations.filter(s => s.machine !== 'VIDE').length}</span>
-                            <span>postes</span>
-                            {isManualMode && waitingStations.length > 0 && (
-                                <span className="text-amber-500 ml-0.5">({waitingStations.length} en attente)</span>
-                            )}
-                        </div>
+                                <div className="w-px h-7 bg-slate-200" />
 
-                        {/* Spacer */}
-                        <div className="flex-1" />
+                                {/* Layout Picker */}
+                                <div className="flex items-center gap-0.5 bg-slate-50 p-0.5 rounded-lg border border-slate-200">
+                                    {[
+                                        { id: 'line', label: '2 Lignes', icon: Columns },
+                                        { id: 'double-zigzag', label: 'Zigzag', icon: ArrowLeftRight },
+                                        ...(isManualMode ? [{ id: 'free', label: 'Libre', icon: Move }] : []),
+                                    ].map((item) => (
+                                        <button key={item.id} onClick={() => handleLayoutChange(item.id as any)} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap ${layoutType === item.id ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-100 hover:text-indigo-600'}`}>
+                                            <item.icon className="w-3.5 h-3.5" />
+                                            <span className="hidden xl:inline">{item.label}</span>
+                                        </button>
+                                    ))}
+                                </div>
 
-                        {/* Right Actions */}
-                        <div className="flex items-center gap-1.5">
-                            <button onClick={() => { activateManualMode(); if (setPostes && postes) { setPostes(postes.map(p => ({ ...p, isPlaced: false, x: undefined, y: undefined }))); } }} className="p-1.5 rounded-lg bg-slate-50 text-rose-400 border border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors flex items-center gap-1" title="Vider tout le plan (basculer en mode libre)">
-                                <Trash2 className="w-4 h-4" />
-                                <span className="text-[10px] uppercase font-black tracking-wider hidden xl:inline">Vider</span>
-                            </button>
-                            {isManualMode && (
-                                <button onClick={renumberStations} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-colors" title="Renuméroter P1, P2, P3...">
-                                    <ListOrdered className="w-4 h-4" />
-                                </button>
-                            )}
-                            {isManualMode && (
-                                <button onClick={restoreGammeOrder} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-colors" title="Remettre les postes selon l'ordre de la gamme">
-                                    <ArrowDownToLine className="w-4 h-4" />
-                                </button>
-                            )}
-                            <button onClick={() => setShowMaterialsPanel(!showMaterialsPanel)} className={`p-1.5 rounded-lg transition-colors ${showMaterialsPanel ? 'bg-indigo-600 text-white' : 'bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600'}`} title="Compteur Machines">
-                                <Calculator className="w-4 h-4" />
-                            </button>
-                            <button onClick={() => setShowLoadTemplateModal(true)} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 transition-colors" title="Charger un plan">
-                                <FolderOpen className="w-4 h-4" />
-                            </button>
-                            <button onClick={() => setShowSaveTemplateModal(true)} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-emerald-600 transition-colors" title="Sauvegarder le plan">
-                                <Save className="w-4 h-4" />
-                            </button>
-                            <button onClick={toggleFullScreen} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 transition-colors" title={isFullScreen ? "Quitter plein écran (Esc/F)" : "Plein écran (F)"}>
-                                {isFullScreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-                            </button>
+                                <div className="w-px h-7 bg-slate-200" />
 
-                            <div className="w-px h-7 bg-slate-200" />
+                                {/* Zoom Controls */}
+                                <div className="flex items-center gap-0.5 bg-slate-50 p-0.5 rounded-lg border border-slate-200">
+                                    <button onClick={() => setZoom(z => Math.max(0.3, z - 0.1))} className="p-1.5 text-slate-500 hover:text-indigo-600 rounded-md hover:bg-slate-100 transition-colors" title="Zoom -"><ZoomOut className="w-3.5 h-3.5" /></button>
+                                    <button onClick={() => setZoom(1)} className="px-2 py-1 text-[10px] font-black text-slate-600 hover:text-indigo-600 rounded-md hover:bg-slate-100 transition-colors min-w-[40px] text-center" title="Réinitialiser Zoom">{Math.round(zoom * 100)}%</button>
+                                    <button onClick={() => setZoom(z => Math.min(2, z + 0.1))} className="p-1.5 text-slate-500 hover:text-indigo-600 rounded-md hover:bg-slate-100 transition-colors" title="Zoom +"><ZoomIn className="w-3.5 h-3.5" /></button>
+                                </div>
 
-                            <button onClick={handleExportPlan} className="px-3 py-1.5 bg-slate-50 rounded-lg flex items-center gap-1.5 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition-colors text-slate-600 text-xs font-bold whitespace-nowrap">
-                                {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} Imprimer
-                            </button>
-                            {onSave && (
-                                <button onClick={() => { onSave(); setSaveSuccess(true); setTimeout(() => setSaveSuccess(false), 2500); }} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg flex items-center gap-1.5 border border-slate-700 hover:bg-emerald-600 hover:border-emerald-600 transition-colors text-xs font-bold whitespace-nowrap active:scale-95">
-                                    {saveSuccess ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />} {saveSuccess ? 'Sauvé !' : 'Sauver'}
-                                </button>
-                            )}
-                        </div>
-                    </div>
+                                {/* Free Mode Tools */}
+                                {isManualMode && layoutType === 'free' && (
+                                    <>
+                                        <div className="w-px h-7 bg-slate-200" />
+                                        <div className="flex items-center gap-0.5 bg-violet-50 p-0.5 rounded-lg border border-violet-200">
+                                            <button onClick={() => applyLayoutPattern('U')} className="p-1.5 rounded-md text-violet-600 hover:bg-slate-100 transition-colors" title="Disposition U"><Columns className="w-3.5 h-3.5" /></button>
+                                            <button onClick={() => applyLayoutPattern('GRID')} className="p-1.5 rounded-md text-violet-600 hover:bg-slate-100 transition-colors" title="Grille"><LayoutGrid className="w-3.5 h-3.5" /></button>
+                                            <button onClick={() => applyLayoutPattern('CIRCLE')} className="p-1.5 rounded-md text-violet-600 hover:bg-slate-100 transition-colors" title="Cercle"><CircleDashed className="w-3.5 h-3.5" /></button>
+                                            <button onClick={() => applyLayoutPattern('LINE')} className="p-1.5 rounded-md text-violet-600 hover:bg-slate-100 transition-colors" title="Ligne droite"><ArrowRight className="w-3.5 h-3.5" /></button>
+                                        </div>
+                                    </>
+                                )}
 
-                    {/* LINKING MODE BANNER */}
-                    {isLinking && (
-                        <div className="bg-indigo-600 text-white px-4 py-2 text-xs font-bold flex items-center justify-between shadow-md mb-2 rounded-lg animate-in slide-in-from-top-2 z-20">
-                            <div className="flex items-center gap-2">
-                                <MousePointerClick className="w-4 h-4 text-indigo-200" />
-                                <span>Mode Liaison : {linkSource ? "Sélectionnez la destination..." : "Sélectionnez le poste de départ"}</span>
+                                {/* Station Counter Badge */}
+                                <div className="w-px h-7 bg-slate-200" />
+                                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 rounded-lg border border-slate-200 text-[10px] font-black text-slate-500 uppercase tracking-wide">
+                                    <Layers className="w-3.5 h-3.5" />
+                                    <span className="text-indigo-600">{workstations.filter(s => s.machine !== 'VIDE').length}</span>
+                                    <span>postes</span>
+                                    {isManualMode && waitingStations.length > 0 && (
+                                        <span className="text-amber-500 ml-0.5">({waitingStations.length} en attente)</span>
+                                    )}
+                                </div>
+
+                                {/* Spacer */}
+                                <div className="flex-1" />
+
+                                {/* Right Actions */}
+                                <div className="flex items-center gap-1.5">
+                                    <button onClick={() => { activateManualMode(); if (setPostes && postes) { setPostes(postes.map(p => ({ ...p, isPlaced: false, x: undefined, y: undefined }))); } }} className="p-1.5 rounded-lg bg-slate-50 text-rose-400 border border-slate-200 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors flex items-center gap-1" title="Vider tout le plan (basculer en mode libre)">
+                                        <Trash2 className="w-4 h-4" />
+                                        <span className="text-[10px] uppercase font-black tracking-wider hidden xl:inline">Vider</span>
+                                    </button>
+                                    {isManualMode && (
+                                        <button onClick={renumberStations} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-colors" title="Renuméroter P1, P2, P3...">
+                                            <ListOrdered className="w-4 h-4" />
+                                        </button>
+                                    )}
+                                    {isManualMode && (
+                                        <button onClick={restoreGammeOrder} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 hover:border-indigo-200 transition-colors" title="Remettre les postes selon l'ordre de la gamme">
+                                            <ArrowDownToLine className="w-4 h-4" />
+                                        </button>
+                                    )}
+                                    <button onClick={() => setShowMaterialsPanel(!showMaterialsPanel)} className={`p-1.5 rounded-lg transition-colors ${showMaterialsPanel ? 'bg-indigo-600 text-white' : 'bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600'}`} title="Compteur Machines">
+                                        <Calculator className="w-4 h-4" />
+                                    </button>
+                                    <button onClick={() => setShowLoadTemplateModal(true)} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 transition-colors" title="Charger un plan">
+                                        <FolderOpen className="w-4 h-4" />
+                                    </button>
+                                    <button onClick={() => setShowSaveTemplateModal(true)} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-emerald-600 transition-colors" title="Sauvegarder le plan">
+                                        <Save className="w-4 h-4" />
+                                    </button>
+                                    <button onClick={toggleFullScreen} className="p-1.5 rounded-lg bg-slate-50 text-slate-400 border border-slate-200 hover:text-indigo-600 transition-colors" title={isFullScreen ? "Quitter plein écran (Esc/F)" : "Plein écran (F)"}>
+                                        {isFullScreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+                                    </button>
+
+                                    <div className="w-px h-7 bg-slate-200" />
+
+                                    <button onClick={handleExportPlan} className="px-3 py-1.5 bg-slate-50 rounded-lg flex items-center gap-1.5 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 transition-colors text-slate-600 text-xs font-bold whitespace-nowrap">
+                                        {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Printer className="w-3.5 h-3.5" />} Imprimer
+                                    </button>
+                                    {onSave && (
+                                        <button onClick={() => { onSave(); setSaveSuccess(true); setTimeout(() => setSaveSuccess(false), 2500); }} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg flex items-center gap-1.5 border border-slate-700 hover:bg-emerald-600 hover:border-emerald-600 transition-colors text-xs font-bold whitespace-nowrap active:scale-95">
+                                            {saveSuccess ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />} {saveSuccess ? 'Sauvé !' : 'Sauver'}
+                                        </button>
+                                    )}
+                                </div>
                             </div>
-                            <button
-                                onClick={() => { setIsLinking(false); setLinkSource(null); }}
-                                className="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-md text-[10px] transition-colors"
-                            >
-                                Terminer
-                            </button>
-                        </div>
-                    )}
 
-                    {/* SWAP MODE BANNER */}
-                    {swapSourceId && !isLinking && (
-                        <div className="bg-orange-500 text-white px-4 py-2 text-xs font-bold flex items-center justify-between shadow-md mb-2 rounded-lg animate-in slide-in-from-top-2 z-20">
-                            <div className="flex items-center gap-2">
-                                <SwapIcon className="w-4 h-4" />
-                                <span>Mode Échange Actif : Sélectionnez le poste cible pour échanger.</span>
-                            </div>
-                            <button
-                                onClick={() => setSwapSourceId(null)}
-                                className="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-md text-[10px] transition-colors"
-                            >
-                                Annuler
-                            </button>
-                        </div>
-                    )}
-
-                    {/* 2. ZONES INDICATOR - UNCHANGED */}
-                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-1.5 flex items-center gap-1 overflow-x-auto text-[10px] font-bold uppercase text-slate-400 shadow-inner shrink-0 mb-1">
-                        <div className="flex items-center gap-2 px-2 py-0.5 bg-slate-50 rounded-lg border border-slate-200 opacity-60 shrink-0"><Package className="w-3 h-3 text-slate-400" /> Stock Tissu</div><ArrowRight className="w-3 h-3 text-slate-300 shrink-0" /><div className="flex items-center gap-2 px-2 py-0.5 bg-slate-50 rounded-lg border border-slate-200 opacity-60 shrink-0"><Scissors className="w-3 h-3 text-slate-400" /> Coupe & Prep</div><ArrowRight className="w-3 h-3 text-emerald-400 shrink-0" /><div className="flex items-center gap-2 px-2 py-0.5 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-700 shadow-sm shrink-0"><Layers className="w-3 h-3" /> Montage (Atelier)</div><ArrowRight className="w-3 h-3 text-emerald-400 shrink-0" />
-                        <div className="flex items-center gap-3">
-                            {swapControlFinition ? (
-                                <>
-                                    <SpecialZoneControl label="Contrôle" type="CONTROLE" icon={Eye} color={{ bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', hoverBg: 'hover:bg-orange-100' }} currentCount={postes?.filter(p => p.machine.toUpperCase().includes('CONTROLE')).length || 0} onAdd={handleAddSpecial} onRemove={handleRemoveSpecial} />
-                                    <button onClick={handleSwapZones} className="p-1 hover:bg-slate-200 rounded-full transition-colors shrink-0 transform active:rotate-180 duration-300" title="Inverser ordre"><ArrowRightLeft className="w-3 h-3 text-slate-400" /></button>
-                                    <SpecialZoneControl label="Finition" type="FINITION" icon={Sparkles} color={{ bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', hoverBg: 'hover:bg-purple-100' }} currentCount={postes?.filter(p => p.machine.toUpperCase().includes('FINITION')).length || 0} onAdd={handleAddSpecial} onRemove={handleRemoveSpecial} />
-                                </>
-                            ) : (
-                                <>
-                                    <SpecialZoneControl label="Finition" type="FINITION" icon={Sparkles} color={{ bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', hoverBg: 'hover:bg-purple-100' }} currentCount={postes?.filter(p => p.machine.toUpperCase().includes('FINITION')).length || 0} onAdd={handleAddSpecial} onRemove={handleRemoveSpecial} />
-                                    <button onClick={handleSwapZones} className="p-1 hover:bg-slate-200 rounded-full transition-colors shrink-0 transform active:rotate-180 duration-300" title="Inverser ordre"><ArrowRightLeft className="w-3 h-3 text-slate-400" /></button>
-                                    <SpecialZoneControl label="Contrôle" type="CONTROLE" icon={Eye} color={{ bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', hoverBg: 'hover:bg-orange-100' }} currentCount={postes?.filter(p => p.machine.toUpperCase().includes('CONTROLE')).length || 0} onAdd={handleAddSpecial} onRemove={handleRemoveSpecial} />
-                                </>
+                            {/* LINKING MODE BANNER */}
+                            {isLinking && (
+                                <div className="bg-indigo-600 text-white px-4 py-2 text-xs font-bold flex items-center justify-between shadow-md mb-2 rounded-lg animate-in slide-in-from-top-2 z-20">
+                                    <div className="flex items-center gap-2">
+                                        <MousePointerClick className="w-4 h-4 text-indigo-200" />
+                                        <span>Mode Liaison : {linkSource ? "Sélectionnez la destination..." : "Sélectionnez le poste de départ"}</span>
+                                    </div>
+                                    <button
+                                        onClick={() => { setIsLinking(false); setLinkSource(null); }}
+                                        className="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-md text-[10px] transition-colors"
+                                    >
+                                        Terminer
+                                    </button>
+                                </div>
                             )}
-                        </div>
-                        <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" /><div className="flex items-center gap-2 px-2 py-0.5 bg-slate-50 rounded-lg border border-slate-200 opacity-60 shrink-0"><Truck className="w-3 h-3 text-slate-400" /> Expédition</div>
-                    </div>
+
+                            {/* SWAP MODE BANNER */}
+                            {swapSourceId && !isLinking && (
+                                <div className="bg-orange-500 text-white px-4 py-2 text-xs font-bold flex items-center justify-between shadow-md mb-2 rounded-lg animate-in slide-in-from-top-2 z-20">
+                                    <div className="flex items-center gap-2">
+                                        <SwapIcon className="w-4 h-4" />
+                                        <span>Mode Échange Actif : Sélectionnez le poste cible pour échanger.</span>
+                                    </div>
+                                    <button
+                                        onClick={() => setSwapSourceId(null)}
+                                        className="bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-md text-[10px] transition-colors"
+                                    >
+                                        Annuler
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* 2. ZONES INDICATOR */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-1.5 flex items-center gap-1 overflow-x-auto text-[10px] font-bold uppercase text-slate-400 shadow-inner shrink-0 mb-1">
+                                <div className="flex items-center gap-2 px-2 py-0.5 bg-slate-50 rounded-lg border border-slate-200 opacity-60 shrink-0"><Package className="w-3 h-3 text-slate-400" /> Stock Tissu</div><ArrowRight className="w-3 h-3 text-slate-300 shrink-0" /><div className="flex items-center gap-2 px-2 py-0.5 bg-slate-50 rounded-lg border border-slate-200 opacity-60 shrink-0"><Scissors className="w-3 h-3 text-slate-400" /> Coupe & Prep</div><ArrowRight className="w-3 h-3 text-emerald-400 shrink-0" /><div className="flex items-center gap-2 px-2 py-0.5 bg-emerald-50 rounded-lg border border-emerald-200 text-emerald-700 shadow-sm shrink-0"><Layers className="w-3 h-3" /> Montage (Atelier)</div><ArrowRight className="w-3 h-3 text-emerald-400 shrink-0" />
+                                <div className="flex items-center gap-3">
+                                    {swapControlFinition ? (
+                                        <>
+                                            <SpecialZoneControl label="Contrôle" type="CONTROLE" icon={Eye} color={{ bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', hoverBg: 'hover:bg-orange-100' }} currentCount={postes?.filter(p => p.machine.toUpperCase().includes('CONTROLE')).length || 0} onAdd={handleAddSpecial} onRemove={handleRemoveSpecial} />
+                                            <button onClick={handleSwapZones} className="p-1 hover:bg-slate-200 rounded-full transition-colors shrink-0 transform active:rotate-180 duration-300" title="Inverser ordre"><ArrowRightLeft className="w-3 h-3 text-slate-400" /></button>
+                                            <SpecialZoneControl label="Finition" type="FINITION" icon={Sparkles} color={{ bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', hoverBg: 'hover:bg-purple-100' }} currentCount={postes?.filter(p => p.machine.toUpperCase().includes('FINITION')).length || 0} onAdd={handleAddSpecial} onRemove={handleRemoveSpecial} />
+                                        </>
+                                    ) : (
+                                        <>
+                                            <SpecialZoneControl label="Finition" type="FINITION" icon={Sparkles} color={{ bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-700', hoverBg: 'hover:bg-purple-100' }} currentCount={postes?.filter(p => p.machine.toUpperCase().includes('FINITION')).length || 0} onAdd={handleAddSpecial} onRemove={handleRemoveSpecial} />
+                                            <button onClick={handleSwapZones} className="p-1 hover:bg-slate-200 rounded-full transition-colors shrink-0 transform active:rotate-180 duration-300" title="Inverser ordre"><ArrowRightLeft className="w-3 h-3 text-slate-400" /></button>
+                                            <SpecialZoneControl label="Contrôle" type="CONTROLE" icon={Eye} color={{ bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', hoverBg: 'hover:bg-orange-100' }} currentCount={postes?.filter(p => p.machine.toUpperCase().includes('CONTROLE')).length || 0} onAdd={handleAddSpecial} onRemove={handleRemoveSpecial} />
+                                        </>
+                                    )}
+                                </div>
+                                <ArrowRight className="w-3 h-3 text-slate-300 shrink-0" /><div className="flex items-center gap-2 px-2 py-0.5 bg-slate-50 rounded-lg border border-slate-200 opacity-60 shrink-0"><Truck className="w-3 h-3 text-slate-400" /> Expédition</div>
+                            </div>
+                        </>
+                    )}
 
                     {/* 3. CANVAS (With Wrapper & Styles for Scrollbars) */}
                     <div className="flex-1 flex gap-4 min-h-0 relative h-full">
 
                         {/* MINI-GAMME SIDEBAR (VISIBLE IN MANUAL MODE) - RESPONSIVE (DRAWER ON MOBILE) */}
-                        {isManualMode && (
+                        {!readOnly && isManualMode && (
                             <>
                                 {/* Mobile Backdrop */}
                                 <div

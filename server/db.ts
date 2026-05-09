@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import bcrypt from 'bcryptjs';
+import { randomUUID } from 'crypto';
 import path from 'path';
 import fs from 'fs';
 
@@ -23,10 +25,34 @@ db.exec(`
   )
 `);
 
-// Insert default guest user (password: guest2024, hashed with bcrypt)
+// Default guest (password: guest2024) — not admin; promote admins via DB or a seeded account.
+const GUEST_PASSWORD_HASH =
+  '$2b$10$GcezDlouVCyPOWHj3UHnf.tNKX8HjlcUA7yO33Tb1aAvkmMUwzGna';
 try {
-  db.prepare(`INSERT OR IGNORE INTO users (id, email, password, name, role) VALUES (1, 'guest@local', '$2b$10$Hy3NBUoxXyUym1dtrms.sus.Lb5CnxM6kOXJzn17qawn.5oCixj2K', 'Guest', 'admin')`).run();
-} catch(e) {}
+  db.prepare(
+    `INSERT OR IGNORE INTO users (id, email, password, name, role) VALUES (1, 'guest@local', ?, 'Guest', 'user')`
+  ).run(GUEST_PASSWORD_HASH);
+  db.prepare(`UPDATE users SET role = 'user' WHERE email = 'guest@local'`).run();
+  // Legacy DBs had a wrong bcrypt for guest2024; align password without touching custom guests.
+  const legacyBrokenGuest =
+    '$2b$10$Hy3NBUoxXyUym1dtrms.sus.Lb5CnxM6kOXJzn17qawn.5oCixj2K';
+  db.prepare(
+    `UPDATE users SET password = ? WHERE email = 'guest@local' AND password = ?`
+  ).run(GUEST_PASSWORD_HASH, legacyBrokenGuest);
+} catch (e) {}
+
+// Any DB where guest@local exists but password ≠ guest2024 (manual edits, old seeds, wrong cwd DB)
+try {
+  const row = db
+    .prepare(`SELECT password FROM users WHERE LOWER(TRIM(email)) = 'guest@local'`)
+    .get() as { password: string } | undefined;
+  if (row?.password && !bcrypt.compareSync('guest2024', row.password)) {
+    db.prepare(`UPDATE users SET password = ? WHERE LOWER(TRIM(email)) = 'guest@local'`).run(GUEST_PASSWORD_HASH);
+    console.warn('[beramethode db] guest@local password was not guest2024; synchronized on startup.');
+  }
+} catch (e) {
+  /* ignore */
+}
 
 // Create models table
 db.exec(`
@@ -139,14 +165,44 @@ try { db.prepare("ALTER TABLE magasin_products ADD COLUMN fournisseurNotes TEXT"
 try { db.prepare("ALTER TABLE magasin_products ADD COLUMN fournisseurLogo TEXT").run(); } catch(e) {}
 try { db.prepare("ALTER TABLE magasin_lots ADD COLUMN quantiteReservee REAL DEFAULT 0").run(); } catch(e) {}
 
-// CREATE SETTINGS TABLE (Invoice generation config etc.)
+// CREATE SETTINGS TABLE (multi-tenant: composite PK)
 db.exec(`
   CREATE TABLE IF NOT EXISTS app_settings (
-    key TEXT PRIMARY KEY,
+    owner_id INTEGER NOT NULL DEFAULT 1,
+    key TEXT NOT NULL,
     value TEXT NOT NULL,
-    owner_id INTEGER DEFAULT 1
+    PRIMARY KEY (owner_id, key),
+    FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE
   )
 `);
+
+// Migrate legacy app_settings (single-column PK on key) → composite (owner_id, key)
+try {
+  const meta = db
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='app_settings'`)
+    .get() as { sql: string } | undefined;
+  if (meta?.sql && !/PRIMARY\s+KEY\s*\(\s*owner_id\s*,\s*key\s*\)/i.test(meta.sql)) {
+    const tx = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE app_settings__new (
+          owner_id INTEGER NOT NULL DEFAULT 1,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          PRIMARY KEY (owner_id, key),
+          FOREIGN KEY (owner_id) REFERENCES users (id) ON DELETE CASCADE
+        )
+      `);
+      db.prepare(
+        `INSERT OR REPLACE INTO app_settings__new (owner_id, key, value) SELECT COALESCE(owner_id, 1), key, value FROM app_settings`
+      ).run();
+      db.exec(`DROP TABLE app_settings`);
+      db.exec(`ALTER TABLE app_settings__new RENAME TO app_settings`);
+    });
+    tx();
+  }
+} catch (e) {
+  console.error('app_settings migration:', e);
+}
 
 // Create Magasin: Bons de Commande Table
 db.exec(`
@@ -340,6 +396,67 @@ CREATE TABLE IF NOT EXISTS worker_pointage (
 );
 `);
 
+// PHASE 6 — Suivi Next-Gen: hourly effectif, downtime codes, scrap, comments
+db.exec(`
+CREATE TABLE IF NOT EXISTS suivi_effectif_horaire (
+  id TEXT PRIMARY KEY,
+  owner_id INTEGER NOT NULL,
+  suivi_id TEXT NOT NULL,
+  chaineId TEXT NOT NULL,
+  modelId TEXT,
+  date TEXT NOT NULL,
+  heure_debut TEXT NOT NULL,
+  heure_fin TEXT NOT NULL,
+  worker_id TEXT,
+  poste TEXT,
+  type_poste TEXT NOT NULL DEFAULT 'MANUEL',
+  is_present INTEGER NOT NULL DEFAULT 1,
+  join_minute INTEGER,
+  leave_minute INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE(suivi_id, worker_id, heure_debut)
+);
+CREATE INDEX IF NOT EXISTS idx_seh_lookup ON suivi_effectif_horaire(chaineId, date);
+CREATE INDEX IF NOT EXISTS idx_seh_model ON suivi_effectif_horaire(modelId, date);
+
+CREATE TABLE IF NOT EXISTS downtime_codes (
+  code TEXT PRIMARY KEY,
+  label_fr TEXT NOT NULL,
+  label_ar TEXT,
+  color TEXT DEFAULT '#ef4444',
+  is_planned INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1
+);
+
+INSERT OR IGNORE INTO downtime_codes (code, label_fr, label_ar, color, is_planned) VALUES
+  ('PANNE_MACHINE', 'Panne machine', 'عطل آلة', '#dc2626', 0),
+  ('MANQUE_MATIERE', 'Manque matière', 'نقص المادة', '#f59e0b', 0),
+  ('PAUSE', 'Pause planifiée', 'استراحة', '#64748b', 1),
+  ('CHANGEMENT_SERIE', 'Changement de série', 'تغيير الموديل', '#8b5cf6', 1),
+  ('QUALITE', 'Problème qualité', 'مشكل جودة', '#ec4899', 0),
+  ('ABSENCE', 'Absence ouvrier', 'غياب عامل', '#ef4444', 0),
+  ('FORMATION', 'Formation', 'تكوين', '#06b6d4', 1),
+  ('AUTRE', 'Autre', 'أخرى', '#475569', 0);
+`);
+
+// Extend suivi_data with scrap / downtime / comments / metadata (idempotent)
+const suiviExtraCols: Array<[string, string]> = [
+  ['scrap_details', 'TEXT'],
+  ['downtime_events', 'TEXT'],
+  ['comments', 'TEXT'],
+  ['created_by', 'TEXT'],
+  ['modelId', 'TEXT'],
+  ['chaineId', 'TEXT'],
+  ['source', 'TEXT'],
+];
+for (const [col, type] of suiviExtraCols) {
+  try {
+    db.prepare(`ALTER TABLE suivi_data ADD COLUMN ${col} ${type}`).run();
+  } catch (e) { /* column exists — ignore */ }
+}
+
 // Create Magasin: Déchets Table
 db.exec(`
   CREATE TABLE IF NOT EXISTS magasin_dechets (
@@ -478,6 +595,62 @@ CREATE TABLE IF NOT EXISTS hr_sage_exports (
 );
 `);
 
+// HR — bases créées avant l’ajout de colonnes : CREATE IF NOT EXISTS ne met pas à jour le schéma.
+// Sans cela, getHRWorkerDossier / pointage peuvent lever SQLITE_ERROR au démarrage des requêtes.
+const hrAddCol = (sql: string) => {
+  try {
+    db.prepare(sql).run();
+  } catch {
+    /* colonne déjà présente ou table absente */
+  }
+};
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN hidden_from_societes TEXT');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN synced_at DATETIME');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN pointeuse_device TEXT');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN pointeuse_type TEXT DEFAULT \'MANUAL\'');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN taux_piece REAL DEFAULT 0');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN mode_paiement TEXT DEFAULT \'VIREMENT\'');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN notes TEXT');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN contact_urgence_nom TEXT');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN contact_urgence_tel TEXT');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN contact_urgence_lien TEXT');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN pointeuse_id TEXT');
+hrAddCol('ALTER TABLE hr_workers ADD COLUMN pin_hash TEXT');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN heure_entree TEXT');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN heure_sortie TEXT');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN pause_debut TEXT');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN pause_fin TEXT');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN source TEXT DEFAULT \'MANUAL\'');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN heures_travaillees REAL DEFAULT 0');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN heures_normales REAL DEFAULT 0');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN heures_supp_25 REAL DEFAULT 0');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN heures_supp_50 REAL DEFAULT 0');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN statut TEXT DEFAULT \'PRESENT\'');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN motif_absence TEXT');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN is_validated INTEGER DEFAULT 0');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN validated_by TEXT');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN notes TEXT');
+hrAddCol('ALTER TABLE hr_pointage ADD COLUMN grille_presence TEXT');
+hrAddCol('ALTER TABLE hr_production ADD COLUMN chaine_id TEXT');
+hrAddCol('ALTER TABLE hr_production ADD COLUMN model_ref TEXT');
+hrAddCol('ALTER TABLE hr_production ADD COLUMN pieces_produites INTEGER DEFAULT 0');
+hrAddCol('ALTER TABLE hr_production ADD COLUMN pieces_defaut INTEGER DEFAULT 0');
+hrAddCol('ALTER TABLE hr_production ADD COLUMN pieces_retouchees INTEGER DEFAULT 0');
+hrAddCol('ALTER TABLE hr_production ADD COLUMN taux_qualite REAL');
+hrAddCol('ALTER TABLE hr_production ADD COLUMN rendement REAL');
+hrAddCol('ALTER TABLE hr_production ADD COLUMN notes TEXT');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN montant_approuve REAL');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN montant_rembourse REAL DEFAULT 0');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN solde_restant REAL DEFAULT 0');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN nb_echeances INTEGER DEFAULT 1');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN mois_debut_deduction TEXT');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN statut TEXT DEFAULT \'DEMANDE\'');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN approuve_par TEXT');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN date_approbation TEXT');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN motif TEXT');
+hrAddCol('ALTER TABLE hr_avances ADD COLUMN notes TEXT');
+hrAddCol('ALTER TABLE hr_sage_exports ADD COLUMN owner_id INTEGER NOT NULL DEFAULT 1');
+
 // Create Production Tables for SuiviLive and Analysis
 db.exec(`
   CREATE TABLE IF NOT EXISTS production_lines (
@@ -556,6 +729,73 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_hr_avances_worker ON hr_avances(worker_id);
   CREATE INDEX IF NOT EXISTS idx_hr_sage_owner ON hr_sage_exports(owner_id, mois);
 `);
+
+// ============================================================================
+// SECTION 23 — Identité plateforme (person_id) + invitations (T23.1 / T23.2)
+// ============================================================================
+db.exec(`
+  CREATE TABLE IF NOT EXISTS platform_person (
+    id TEXT PRIMARY KEY,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS hr_worker_person (
+    person_id TEXT NOT NULL,
+    hr_worker_id TEXT NOT NULL,
+    owner_id INTEGER NOT NULL,
+    linked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (hr_worker_id),
+    FOREIGN KEY (person_id) REFERENCES platform_person(id) ON DELETE RESTRICT,
+    FOREIGN KEY (hr_worker_id) REFERENCES hr_workers(id) ON DELETE CASCADE,
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_hr_worker_person_person ON hr_worker_person(person_id);
+  CREATE INDEX IF NOT EXISTS idx_hr_worker_person_owner ON hr_worker_person(owner_id);
+
+  CREATE TABLE IF NOT EXISTS hr_invitation (
+    id TEXT PRIMARY KEY,
+    owner_id INTEGER NOT NULL,
+    person_id TEXT NOT NULL,
+    token TEXT UNIQUE NOT NULL,
+    proposed_matricule TEXT NOT NULL,
+    proposed_full_name TEXT NOT NULL,
+    proposed_cin TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    responded_at DATETIME,
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (person_id) REFERENCES platform_person(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_hr_invitation_token ON hr_invitation(token);
+  CREATE INDEX IF NOT EXISTS idx_hr_invitation_owner_status ON hr_invitation(owner_id, status);
+`);
+
+try {
+  const orphans = db
+    .prepare(
+      `SELECT w.id AS wid, w.owner_id AS oid
+       FROM hr_workers w
+       WHERE NOT EXISTS (SELECT 1 FROM hr_worker_person p WHERE p.hr_worker_id = w.id)`
+    )
+    .all() as { wid: string; oid: number }[];
+  if (orphans.length > 0) {
+    const insPerson = db.prepare(`INSERT INTO platform_person (id) VALUES (?)`);
+    const insLink = db.prepare(
+      `INSERT OR IGNORE INTO hr_worker_person (person_id, hr_worker_id, owner_id) VALUES (?, ?, ?)`
+    );
+    const tx = db.transaction(() => {
+      for (const row of orphans) {
+        const pid = `per-${randomUUID()}`;
+        insPerson.run(pid);
+        insLink.run(pid, row.wid, row.oid);
+      }
+    });
+    tx();
+    console.log(`[beramethode db] platform_person backfill: ${orphans.length} lien(s) RH créé(s).`);
+  }
+} catch (e) {
+  console.warn('[beramethode db] backfill hr_worker_person:', e);
+}
 
 // ============================================================================
 // 🧠 ARCHITECTURE D'INTELLIGENCE ARTIFICIELLE (AI-READY ENVIRONMENT)
@@ -639,6 +879,80 @@ db.exec(`
               '{"matricule":"' || OLD.matricule || '", "name":"' || OLD.full_name || '"}', 
               'SYSTEM_TRIGGER');
   END;
+`);
+
+// ============================================================================
+// PHASE: FACTURATION (Achat, Vente, Devis, BL)
+// ============================================================================
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS factures (
+    id TEXT PRIMARY KEY,
+    owner_id INTEGER NOT NULL,
+    numero TEXT NOT NULL UNIQUE,        
+    type TEXT NOT NULL,                  -- ACHAT | VENTE | PROFORMA | AVOIR | DEVIS
+    
+    tiers_nom TEXT NOT NULL,
+    tiers_ice TEXT,
+    tiers_rc TEXT,
+    tiers_if TEXT,
+    tiers_adresse TEXT,
+    tiers_tel TEXT,
+    tiers_email TEXT,
+    
+    date_facture TEXT NOT NULL,
+    date_echeance TEXT,
+    
+    total_ht REAL NOT NULL DEFAULT 0,
+    taux_tva REAL DEFAULT 0,             -- TVA is optional
+    total_tva REAL DEFAULT 0,
+    total_ttc REAL NOT NULL DEFAULT 0,
+    montant_paye REAL DEFAULT 0,
+    
+    devis_id TEXT,                       
+    planning_id TEXT,                    
+    commande_id TEXT,                    
+    
+    statut TEXT DEFAULT 'BROUILLON',    -- BROUILLON | ENVOYEE | PAYEE | PARTIELLEMENT | ANNULEE
+    notes TEXT,
+    lignes TEXT NOT NULL,                -- JSON: [{designation, qte, prix_unitaire, total}]
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS bons_livraison (
+    id TEXT PRIMARY KEY,
+    owner_id INTEGER NOT NULL,
+    numero TEXT NOT NULL UNIQUE,        
+    facture_id TEXT,
+    tiers_nom TEXT NOT NULL,
+    date_livraison TEXT NOT NULL,
+    adresse_livraison TEXT,
+    transporteur TEXT,
+    lignes TEXT NOT NULL,                -- JSON
+    statut TEXT DEFAULT 'PREPARE',      -- PREPARE | EXPEDIE | LIVRE | RETOUR
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS paiements (
+    id TEXT PRIMARY KEY,
+    owner_id INTEGER NOT NULL,
+    facture_id TEXT NOT NULL,
+    date_paiement TEXT NOT NULL,
+    montant REAL NOT NULL,
+    mode TEXT DEFAULT 'VIREMENT',       -- VIREMENT | CHEQUE | ESPECES | LCN
+    reference TEXT,                      
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (facture_id) REFERENCES factures(id) ON DELETE CASCADE
+  );
+  
+  CREATE INDEX IF NOT EXISTS idx_factures_owner ON factures(owner_id);
+  CREATE INDEX IF NOT EXISTS idx_factures_type ON factures(type);
 `);
 
 export default db;

@@ -1,27 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
 import db from './db';
 
-const SECRET_KEY = process.env.JWT_SECRET || 'super-secret-key-change-this';
-
-// Middleware to check if user is admin
+/** Use after `authenticateToken` — role on `req.user` is refreshed from DB each request */
 export const isAdmin = (req: Request, res: Response, next: NextFunction) => {
-  const token = req.cookies.token;
-
-  if (!token) {
+  const u = (req as any).user as { id?: number; role?: string } | undefined;
+  if (!u?.id) {
     return res.status(401).json({ message: 'Not authenticated' });
   }
-
-  try {
-    const decoded = jwt.verify(token, SECRET_KEY) as any;
-    if (decoded.role !== 'admin') {
-      return res.status(403).json({ message: 'Access denied. Admins only.' });
-    }
-    (req as any).user = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({ message: 'Invalid token' });
+  if (u.role !== 'admin') {
+    return res.status(403).json({ message: 'Access denied. Admins only.' });
   }
+  next();
 };
 
 export const getAllUsers = (req: Request, res: Response) => {

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { TrendingUp, Calendar, Package, MapPin, Cpu } from 'lucide-react';
 import type { ModelData, PlanningEvent, SuiviData, AppSettings } from '../types';
-import { calculateSectionDates } from '../utils/planning';
+import { calculateSectionDates, getWorkMinutesPerDay } from '../utils/planning';
 
 interface Props {
     models: ModelData[];
@@ -47,7 +47,8 @@ export default function RendementBoard({ models, planningEvents, suivis, setting
             const target = evs.reduce((acc, e) => acc + (e.qteTotal || 0), 0);
             const sam = m.meta_data?.total_temps || 0;
             const totalMin = produced * sam;
-            const presence = sus.reduce<number>((acc, s) => acc + (s.totalWorkers || 0) * (settings.workingHoursStart ? 480 : 480), 0);
+            const minutesPerDay = getWorkMinutesPerDay(settings);
+            const presence = sus.reduce<number>((acc, s) => acc + (s.totalWorkers || 0) * minutesPerDay, 0);
             const eff = presence > 0 ? Math.round((totalMin / presence) * 100) : 0;
             const prep = sus.reduce<number>((acc, s) => acc + (s.sectionOutput?.preparation || 0), 0);
             const mont = sus.reduce<number>((acc, s) => acc + (s.sectionOutput?.montage || 0), 0);

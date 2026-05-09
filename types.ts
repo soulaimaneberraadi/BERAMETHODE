@@ -1,12 +1,73 @@
+/** Pièce jointe PDF stockée en local (data URL). */
+export type MachinePdfAttachment = {
+  dataUrl: string;
+  name: string;
+};
 
-export type Machine = {
+/**
+ * Classe (sinf) de machine — définit les paramètres méthode utilisés par les règles industrielles.
+ * Plusieurs machines physiques (MachineInstance) peuvent appartenir à une même classe.
+ */
+export type MachineClass = {
   id: string;
   name: string;
-  classe: string;
+  classe: string;      // code classe ex: "301", "504"
   speed: number;
   speedMajor: number;
   cofs: number;
   active: boolean;
+  machineCategory?: string;
+  photoDataUrl?: string;
+  machinePhotos?: string[];
+  machineManuals?: MachinePdfAttachment[];
+  manualPdfDataUrl?: string;
+  manualPdfName?: string;
+};
+
+/**
+ * Machine physique individuelle dans l'atelier, identifiée par numéro séquentiel au sein de sa classe.
+ */
+export type MachineInstance = {
+  id: string;
+  classId: string;
+  numero: number;
+  matricule?: string;
+  brand?: string;
+  purchaseDate?: string;
+  purchaseCondition?: 'NEW' | 'USED';
+  status?: 'OK' | 'PANNE' | 'MAINT';
+  machinePhotos?: string[];
+  machineManuals?: MachinePdfAttachment[];
+  chainId?: string;
+  serialNumber?: string;
+};
+
+/** Alias rétrocompatibilité — Planning, SuiviProduction, machineMatch utilisent Machine */
+export type Machine = MachineClass & {
+  matricule?: string;
+  brand?: string;
+  purchaseDate?: string;
+  purchaseCondition?: 'NEW' | 'USED';
+  status?: 'OK' | 'PANNE' | 'MAINT';
+  chainId?: string;
+  serialNumber?: string;
+};
+
+/** Entrée / sortie machine conservée hors parc actif (traçabilité). */
+export type MachineFleetEventKind = 'ADD' | 'EXIT' | 'SELL';
+
+export type MachineFleetHistoryEntry = {
+  id: string;
+  at: string;
+  kind: MachineFleetEventKind;
+  /** Qui a enregistré l'opération (obligatoire sortie / vente). */
+  actorName: string;
+  /** Motif, acheteur, commentaire libre. */
+  details: string;
+  /** Copie de la fiche au moment de l'événement. */
+  machineSnapshot: Machine;
+  /** Valeur saisie ou décodée pour verrouiller le retrait (matricule, ou id si pas de matricule). */
+  confirmationRef?: string;
 };
 
 export type SpeedFactor = {
@@ -43,6 +104,8 @@ export type Operation = {
   order: number;
   description: string;
   machineId: string;
+  /** Si renseigné, la couverture machines utilise cette classe (prioritaire sur `machineId` → parc). */
+  machineClass?: string;
   machineName?: string;
   length?: number;
   manualTime?: number;
@@ -142,6 +205,9 @@ export type FicheData = {
   colors?: { id: string, name: string }[];
   gridQuantities?: Record<string, number>;
   materials?: PurchasingData[];
+  todm?: string;
+  kisba?: 'COUPE' | 'EN_COURS' | 'NON_LANCE' | 'AUTRE';
+  hala?: 'EN_COURS' | 'TERMINE' | 'EN_ATTENTE' | 'BLOQUE';
 };
 
 // --- NEW TYPES FOR COST CALCULATOR ---
@@ -244,9 +310,21 @@ export interface AppSettings {
   chainStaff: Record<string, { id: string, name: string, role: string }[]>; // Staff/Supervisors per chain
   companyProfile: CompanyProfile;
   chainCapacityPerDay?: Record<string, number>; // CHAINE X -> capacity/day
+  /** Machines affectées à chaque ligne (ids). Si absent ou vide pour une ligne → toutes les machines actives (comportement par défaut). */
+  chainMachines?: Record<string, string[]>;
   calendarExceptions?: Record<string, { isWorking: boolean, note: string }>; // Key: 'YYYY-MM-DD', for specific holidays or extra working days
   tasks?: Task[]; // Updated to the new Task interface
   employees?: Employee[]; // New: Centralized HR directory
+  /** Recalcul serveur H.N. / HS depuis entrée–sortie–pause (sync `app_settings.hr_auto_overtime`). Défaut true. */
+  hrAutoOvertime?: boolean;
+  /** Arrondi SAGE (minutes) pour le calcul de paie — miroir de `app_settings.hr_sage_rounding` (défaut 15). */
+  hrSageRounding?: number;
+  /** Début de journée « usine » pour l'ancrage d'entrée (jour) — miroir de `app_settings.hr_sage_workday_start` (ex. 06:00). */
+  hrSageWorkdayStart?: string;
+  /** Appliquer règles SAGE côté serveur — miroir de `app_settings.hr_sage_apply` (défaut true). */
+  hrSageApply?: boolean;
+  /** Référence documentaire compta / facturation : base de temps pour valorisation (V1). */
+  hrComptaPointageRef?: 'pointees' | 'normales_paie';
 }
 
 export interface PdfSettings {
@@ -262,7 +340,14 @@ export interface Translations {
 }
 
 // --- NEW TYPE FOR WORKFLOW & COUPE ---
-export type WorkflowStatus = 'COUPE' | 'METHODES' | 'PLANNING' | 'SUIVI' | 'EXPORT';
+export type WorkflowStatus =
+  | 'NEW'
+  | 'INGENIERIE'
+  | 'COUPE'
+  | 'METHODES'
+  | 'PLANNING'
+  | 'SUIVI'
+  | 'EXPORT';
 
 export interface Faisceau {
   id: string;
@@ -306,6 +391,9 @@ export interface ModelData {
     colors?: { id: string, name: string }[];
     quantity?: number;
     photo_url?: string; // Phase 5 Anticipation
+    todm?: string;
+    kisba?: 'COUPE' | 'EN_COURS' | 'NON_LANCE' | 'AUTRE';
+    hala?: 'EN_COURS' | 'TERMINE' | 'EN_ATTENTE' | 'BLOQUE';
   };
   gamme_operatoire: Operation[];
   // Added for Implantation persistence
@@ -378,6 +466,23 @@ export type PlanningEvent = {
   montageEnd?: string;       // calculé = dateExport
   lots_data?: Lot[];         // Phase 2: Sous-commandes
   color?: string;            // Couleur identifiant l'OF dans le Suivi
+  lastSyncedFromSuivi?: string;
+  /** Phase 5 — écart besoins vs stock magasin (persisté avec l'OF) */
+  materialShortages?: { name: string; unit?: string; productId?: string; required: number; available: number; missing: number; unmatched?: boolean }[];
+  /** Phase 6 — bons de commande brouillon liés à l'OF (sans API SQLite pour l'instant) */
+  purchaseOrdersDraft?: PlanningPurchaseDraft[];
+};
+
+/** Ligne de BC générée depuis le planning (persistance JSON / raw_data) */
+export type PlanningPurchaseDraft = {
+  id: string;
+  productId: string;
+  productName: string;
+  qty: number;
+  supplierName?: string;
+  orderDateYmd: string;
+  expectedArrivalYmd: string;
+  status: 'DRAFT';
 };
 
 export interface Lot {
@@ -388,6 +493,8 @@ export interface Lot {
   deadline: string;
   status: 'PENDING' | 'IN_PROGRESS' | 'READY' | 'DELIVERED';
   dateDelivered?: string;
+  producedQuantity?: number;
+  modelId?: string;
 }
 
 export interface SectionEffectif {
@@ -400,9 +507,16 @@ export interface Chaine {
   name: string;
   capacityPerDay: number;   // القدرة الإنتاجية في النهار
   isActive: boolean;
+  /** Efficacité dynamique (Suivi) ou manuelle — optionnel */
+  efficiency?: number;
+  efficiencySource?: 'COMPUTED' | 'MANUAL';
+  efficiencySampleSize?: number;
 }
 
 export type HourlySuivi = Record<string, number | undefined>;
+
+/** Rôles AJANIF (effectifs journaliers) — tags libres optionnels (ex. OVR), sans impact sur les totaux numériques */
+export type EffectifRoleTagKey = 'chaf' | 'recta' | 'sujet' | 'transp' | 'man' | 'sp' | 'stager';
 
 export type SuiviData = {
   id: string;
@@ -429,6 +543,11 @@ export type SuiviData = {
   man?: number;
   sp?: number;
   stager?: number;
+  methodes?: number;
+  qualite?: number;
+  mecanicien?: number;
+  /** Texte libre par rôle (code, remarque) — affiché à côté des effectifs ; ne remplace pas les nombres */
+  effectifRoleTags?: Partial<Record<EffectifRoleTagKey, string>>;
   ouvriers_modele?: number; // Ouvriers dédiés au modèle (dénominateur R%)
   absent?: number;
   totalWorkers: number;
@@ -439,6 +558,80 @@ export type SuiviData = {
   activeSection?: 'PREPARATION' | 'MONTAGE' | 'BOTH';
   sectionEffectif?: { preparation: SectionEffectif; montage: SectionEffectif };
   sectionOutput?: { preparation: number; montage: number };
+  // PHASE 6 — Next-Gen Suivi
+  modelId?: string;
+  chaineId?: string;
+  created_by?: string;
+  source?: 'PLANNING' | 'LIBRARY_DIRECT';
+  scrap_details?: ScrapDetail[];
+  downtime_events?: DowntimeEvent[];
+  comments?: SuiviComment[];
+  /** Fil d'activité atelier (référence logique, ex. bera:activity:planningId:posteId) */
+  activityThreadId?: string;
+  activityAnchorPosteId?: string;
+  /** Snapshot optionnel des bornes gamme (poste / opération) */
+  gammeEntryPosteId?: string;
+  gammeExitPosteId?: string;
+  // NEW: Support for dynamic effectif roles
+  customEffectifs?: Record<string, number>;
+};
+
+// PHASE 6 — Next-Gen Suivi types
+export type PosteType = 'MACHINISTE' | 'MANUEL' | 'AUX';
+
+export type SuiviEffectifHoraire = {
+  id: string;
+  suivi_id: string;
+  chaineId: string;
+  modelId?: string;
+  date: string;
+  heure_debut: string; // "HH:MM"
+  heure_fin: string;   // "HH:MM"
+  worker_id?: string;
+  poste?: string;
+  type_poste: PosteType;
+  is_present: boolean;
+  join_minute?: number;  // 0..60 — minutes into the hour when the worker joined
+  leave_minute?: number; // 0..60 — minutes into the hour when the worker left
+};
+
+export type DowntimeEvent = {
+  id: string;
+  hour: string;     // "HH:MM"
+  code: string;     // FK → downtime_codes.code
+  minutes: number;
+  notes?: string;
+  reported_by?: string;
+};
+
+export type ScrapDetail = {
+  id: string;
+  hour: string;
+  quantity: number;
+  cause: string;
+  worker_id?: string;
+  operation?: string;
+};
+
+export type SuiviComment = {
+  id: string;
+  hour?: string;
+  author: string;
+  text: string;
+  timestamp: string;
+};
+
+export type OEEBreakdown = {
+  disponibilite: number;  // 0..1
+  performance: number;    // 0..1
+  qualite: number;        // 0..1
+  oee: number;            // product
+  plannedMinutes: number;
+  runMinutes: number;
+  downtimeMinutes: number;
+  produced: number;
+  theoretical: number;
+  good: number;
 };
 
 export type PosteSuiviData = {
@@ -507,6 +700,12 @@ export interface HRWorker {
   id: string;
   matricule: string;
   full_name: string;
+  /** Identité plateforme (Section 23) — renvoyé par l'API, lecture seule côté UI */
+  person_id?: string | null;
+  /** Rattachement explicite à un person_id existant (corps POST uniquement, pas colonne SQL) */
+  link_person_id?: string | null;
+  /** Indication API BERAOUVIER : un PIN a été défini (pas le hash) */
+  has_pin?: boolean;
   cin?: string;
   cnss?: string;
   phone?: string;
@@ -546,6 +745,8 @@ export interface HRPointage {
   id: string;
   worker_id: string;
   date: string;
+  /** JSON : tableau de 9 booléens (créneaux 6h30–15h30), optionnel — sinon grille dérivée des heures. */
+  grille_presence?: string | null;
   heure_entree?: string;
   heure_sortie?: string;
   pause_debut?: string;
@@ -624,4 +825,79 @@ export interface SagePaieRow {
   total_brut: number;
   avances: number;
   net_a_payer: number;
+}
+
+// --------------------------------------------------------------------------------
+// PHASE: FACTURATION (Achat, Vente, Devis, BL)
+// --------------------------------------------------------------------------------
+
+export interface FactureLigne {
+  designation: string;
+  quantite: number;
+  prix_unitaire: number;
+  total: number;
+}
+
+export type FactureType = 'ACHAT' | 'VENTE' | 'PROFORMA' | 'AVOIR' | 'DEVIS';
+export type FactureStatut = 'BROUILLON' | 'ENVOYEE' | 'PAYEE' | 'PARTIELLEMENT' | 'ANNULEE' | 'ACCEPTE' | 'REFUSE';
+
+export interface Facture {
+  id: string;
+  owner_id: number;
+  numero: string;
+  type: FactureType;
+  
+  tiers_nom: string;
+  tiers_ice?: string | null;
+  tiers_rc?: string | null;
+  tiers_if?: string | null;
+  tiers_adresse?: string | null;
+  tiers_tel?: string | null;
+  tiers_email?: string | null;
+  
+  date_facture: string;
+  date_echeance?: string | null;
+  
+  total_ht: number;
+  taux_tva: number; // 0 for optional/no TVA
+  total_tva: number;
+  total_ttc: number;
+  montant_paye: number;
+  
+  devis_id?: string | null;
+  planning_id?: string | null;
+  commande_id?: string | null;
+  
+  statut: FactureStatut;
+  notes?: string | null;
+  lignes: FactureLigne[]; // Will be stored as JSON string in DB
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BonLivraison {
+  id: string;
+  owner_id: number;
+  numero: string;
+  facture_id?: string | null;
+  tiers_nom: string;
+  date_livraison: string;
+  adresse_livraison?: string | null;
+  transporteur?: string | null;
+  lignes: any[]; // JSON array
+  statut: 'PREPARE' | 'EXPEDIE' | 'LIVRE' | 'RETOUR';
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface Paiement {
+  id: string;
+  owner_id: number;
+  facture_id: string;
+  date_paiement: string;
+  montant: number;
+  mode: 'VIREMENT' | 'CHEQUE' | 'ESPECES' | 'LCN';
+  reference?: string | null;
+  notes?: string | null;
+  created_at: string;
 }

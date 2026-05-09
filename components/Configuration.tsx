@@ -1,12 +1,22 @@
-import React, { useState } from 'react';
-import { Settings, Clock, Calendar, Coins, Users, Shield, Save, Building, Plus, Trash2, CheckCircle, ListTodo, CalendarClock, AlertTriangle, Check, X, SkipForward } from 'lucide-react';
-import { AppSettings, AppTask } from '../types';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Settings, Clock, Calendar, Coins, Users, Shield, Save, Building, Plus, Trash2, CheckCircle, ListTodo, CalendarClock, AlertTriangle, Check, X, SkipForward, Factory } from 'lucide-react';
+import { AppSettings, AppTask, Machine } from '../types';
+import { isMachineOperational } from '../utils/machineMatch';
 import AgendaModal from './AgendaModal';
+import {
+  buildPointageTranchesFromAppSettings,
+  getDefaultPointageTranches,
+  parsePointageTranchesFromSettings,
+  type PointageTranchesConfig,
+  type PointageTrancheSlot,
+} from '../lib/pointageGrille';
 
 interface ConfigurationProps {
     settings: AppSettings;
     setSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
     lang: 'fr' | 'ar';
+    /** Parc machines — affectation par chaîne pour le planning (couverture gamme). */
+    machines: Machine[];
 }
 
 const TRANSLATIONS = {
@@ -34,6 +44,30 @@ const TRANSLATIONS = {
         days: ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'],
         generalManagers: 'Direction & Encadrement Général',
         chainStaff: 'Personnel par Chaîne',
+        rhComptaTitle: 'RH — Pointage & comptabilité',
+        rhAutoOvertime: 'Recalcul auto des heures (H.N. / sup.) depuis entrée, sortie et pause',
+        rhAutoOvertimeHint: 'Si désactivé, vous pouvez saisir manuellement les heures normales et supplémentaires (onglet Pointage du dossier ou grille journalière).',
+        rhComptaRef: 'Référence temps pour compta / valorisation (indicatif)',
+        rhComptaRefPointees: 'Heures pointées (travaillées)',
+        rhComptaRefNormales: 'Heures normales « paie » uniquement',
+        rhComptaRefHint: 'Option documentaire : les exports paie utilisent déjà les lignes pointage ; ce réglage sert d’alignement avec la facturation ou la compta interne.',
+        rhSageServerTitle: 'Règles d’heures « SAGE / paie » (serveur)',
+        rhSageServerHint: 'L’enregistrement pousse `hr_sage_rounding` et `hr_sage_workday_start` vers la base (priorité : variables d’environnement si définies sur le serveur). Les heures affichées (pointeuse) restent brutes.',
+        rhSageRounding: 'Arrondi (minutes, 1–60)',
+        rhSageWorkday: 'Ancrage entrée (journée) — ex. 06:00',
+        rhSageApply: 'Appliquer pour le calcul H.N. / H.S. / exports',
+        rhSageSave: 'Enregistrer les règles SAGE (serveur)',
+        rhTranchesTitle: 'Tranches (créneaux) — grille pointage',
+        rhTranchesDesc: 'Colonnes du tableau Pointage. Si rien n’est enregistré côté serveur, la grille suit les heures atelier + pauses ci-dessus. Le bouton ci-dessous régénère les tranches à partir de cette même plage.',
+        rhTranchesPause: 'Colonne « pause » (ligne —) après la tranche n°',
+        rhTranchesNone: 'Aucune',
+        rhTranchesLabel: 'Libellé',
+        rhTranchesStart: 'Début',
+        rhTranchesEnd: 'Fin',
+        rhTranchesAdd: 'Ajouter une tranche',
+        rhTranchesDel: 'Suppr.',
+        rhTranchesReset: 'Générer depuis horaires atelier',
+        rhTranchesSave: 'Enregistrer les tranches',
     },
     ar: {
         title: 'الإعدادات العامة',
@@ -59,6 +93,30 @@ const TRANSLATIONS = {
         days: ['الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد'],
         generalManagers: 'الإدارة والمسؤولين العامين (General)',
         chainStaff: 'المسؤولين في كل سلسلة (Chaine)',
+        rhComptaTitle: 'الموارد البشرية — الحضور والمحاسبة',
+        rhAutoOvertime: 'إعادة احتساب تلقائي للساعات (عادية / إضافية) من الدخول والخروج والاستراحة',
+        rhAutoOvertimeHint: 'عند الإيقاف يمكن إدخال الساعات يدوياً.',
+        rhComptaRef: 'مرجع الوقت للمحاسبة (إرشادي)',
+        rhComptaRefPointees: 'ساعات العمل الفعلية',
+        rhComptaRefNormales: 'الساعات العادية للأجر فقط',
+        rhComptaRefHint: 'خيار توثيقي للتوافق مع الفوترة.',
+        rhSageServerTitle: 'ساعات الأجر (مقارب لسAGE) — الخادم',
+        rhSageServerHint: 'يُحفظ في قاعدة البيانات مع إمكانية تثبيت ENV على الخادم. عرض الوقت الفعلي دون تغييره.',
+        rhSageRounding: 'التقريب (دقائق 1–60)',
+        rhSageWorkday: 'بداية نهار دخول (مثال 06:00)',
+        rhSageApply: 'تفعيل الاحتساب للساعات العادية/الفائضة/التصدير',
+        rhSageSave: 'حفظ قواعد SAGE (الخادم)',
+        rhTranchesTitle: 'الفترات (شرائح زمنية) — شبكة الحضور',
+        rhTranchesDesc: 'أعمدة جدول الحضور. إن لم تُحفَظ شرائح في الخادم فالشبكة تُبنى من ساعات الوركشة ووقت الاستراحة أعلاه. الزر يُعيد توليد الشرائح من نفس النطاق.',
+        rhTranchesPause: 'عمود « استراحة » (—) بعد الشريحة رقم',
+        rhTranchesNone: 'بدون',
+        rhTranchesLabel: 'الاسم',
+        rhTranchesStart: 'البداية',
+        rhTranchesEnd: 'النهاية',
+        rhTranchesAdd: 'إضافة شريحة',
+        rhTranchesDel: 'حذف',
+        rhTranchesReset: 'توليد من ساعات الورشة',
+        rhTranchesSave: 'حفظ الشرائح',
     }
 };
 
@@ -80,10 +138,99 @@ const CURRENCIES = [
     { code: 'ZAR', label: 'ZAR - Rand Sud-Africain' },
 ];
 
-export default function Configuration({ settings, setSettings, lang }: ConfigurationProps) {
+export default function Configuration({ settings, setSettings, lang, machines }: ConfigurationProps) {
     const t = TRANSLATIONS[lang];
     const [showSaveToast, setShowSaveToast] = useState(false);
     const [showAgenda, setShowAgenda] = useState(false);
+    const [sageR, setSageR] = useState(15);
+    const [sageW, setSageW] = useState('06:00');
+    const [sageA, setSageA] = useState(true);
+    const [sageBusy, setSageBusy] = useState(false);
+    const [trCfg, setTrCfg] = useState<PointageTranchesConfig>(() => getDefaultPointageTranches());
+    const [trBusy, setTrBusy] = useState(false);
+    const loadSage = useCallback(() => {
+        fetch('/api/settings', { credentials: 'include' })
+            .then(r => (r.ok ? r.json() : null))
+            .then((d: Record<string, unknown> | null) => {
+                if (!d) return;
+                const r0 = d.hr_sage_rounding;
+                const w0 = d.hr_sage_workday_start;
+                const a0 = d.hr_sage_apply;
+                if (r0 != null) setSageR(Math.min(60, Math.max(1, parseInt(String(r0), 10) || 15)));
+                if (w0 != null && /^\d{1,2}:\d{2}/.test(String(w0))) setSageW(String(w0).match(/^\d{1,2}:\d{2}/)![0]);
+                if (a0 !== undefined) setSageA(a0 !== 'false' && a0 !== false);
+                setTrCfg(parsePointageTranchesFromSettings(d.hr_pointage_tranches, settings));
+            })
+            .catch(() => {});
+    }, [settings]);
+    useEffect(() => { loadSage(); }, [loadSage]);
+    const saveSage = () => {
+        setSageBusy(true);
+        fetch('/api/settings', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hr_sage_rounding: String(sageR),
+                hr_sage_workday_start: sageW,
+                hr_sage_apply: sageA ? 'true' : 'false',
+            }),
+        })
+            .then(r => {
+                if (r.ok) {
+                    setSettings(prev => ({ ...prev, hrSageRounding: sageR, hrSageWorkdayStart: sageW, hrSageApply: sageA }));
+                }
+            })
+            .catch(() => {})
+            .finally(() => setSageBusy(false));
+    };
+
+    const saveTranches = () => {
+        setTrBusy(true);
+        fetch('/api/settings', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hr_pointage_tranches: trCfg }),
+        })
+            .then(r => {
+                if (r.ok) {
+                    setShowSaveToast(true);
+                    setTimeout(() => setShowSaveToast(false), 3000);
+                }
+            })
+            .catch(() => {})
+            .finally(() => setTrBusy(false));
+    };
+
+    const updateTrSlot = (index: number, patch: Partial<PointageTrancheSlot>) => {
+        setTrCfg(c => {
+            const slots = c.slots.map((s, i) => (i === index ? { ...s, ...patch } : s));
+            return { ...c, slots };
+        });
+    };
+
+    const removeTrSlot = (index: number) => {
+        setTrCfg(c => {
+            if (c.slots.length <= 2) return c;
+            const slots = c.slots.filter((_, i) => i !== index);
+            let sep = c.sepAfterIndex;
+            if (sep > slots.length - 2) sep = Math.max(-1, slots.length - 2);
+            return { slots, sepAfterIndex: sep };
+        });
+    };
+
+    const addTrSlot = () => {
+        setTrCfg(c => {
+            const n = c.slots.length + 1;
+            const slots = [...c.slots, { label: `T${n}`, start: '08:00', end: '09:00' }];
+            return { ...c, slots };
+        });
+    };
+
+    const resetTranches = () => {
+        setTrCfg(buildPointageTranchesFromAppSettings(settings));
+    };
 
     // --- TASK STATE ---
     const [newTaskText, setNewTaskText] = useState('');
@@ -258,6 +405,180 @@ export default function Configuration({ settings, setSettings, lang }: Configura
                                 <div className="bg-indigo-50 text-indigo-700 p-4 rounded-xl text-sm font-medium border border-indigo-100 flex items-start gap-3">
                                     <Settings className="w-5 h-5 shrink-0 mt-0.5" />
                                     <p>Les paramètres globaux (Devise, Coût Minute, Horaires) sont synchronisés instantanément sur toutes les pages de l'application.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+                        <div className="px-5 py-4 bg-slate-50 border-b border-slate-100 flex items-center gap-2">
+                            <Users className="w-5 h-5 text-slate-500" />
+                            <h2 className="font-bold text-slate-800">{t.rhComptaTitle}</h2>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            <label className="flex items-start gap-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    className="mt-1 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                    checked={settings.hrAutoOvertime !== false}
+                                    onChange={e => setSettings(prev => ({ ...prev, hrAutoOvertime: e.target.checked }))}
+                                />
+                                <span>
+                                    <span className="font-bold text-slate-800 text-sm block">{t.rhAutoOvertime}</span>
+                                    <span className="text-xs text-slate-500">{t.rhAutoOvertimeHint}</span>
+                                </span>
+                            </label>
+                            <div>
+                                <label className="block text-xs font-bold uppercase text-slate-500 mb-2">{t.rhComptaRef}</label>
+                                <select
+                                    name="hrComptaPointageRef"
+                                    value={settings.hrComptaPointageRef === 'normales_paie' ? 'normales_paie' : 'pointees'}
+                                    onChange={e =>
+                                        setSettings(prev => ({
+                                            ...prev,
+                                            hrComptaPointageRef: e.target.value === 'normales_paie' ? 'normales_paie' : 'pointees',
+                                        }))
+                                    }
+                                    className="w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 outline-none focus:border-indigo-500 font-medium text-slate-700 transition-all cursor-pointer text-sm"
+                                >
+                                    <option value="pointees">{t.rhComptaRefPointees}</option>
+                                    <option value="normales_paie">{t.rhComptaRefNormales}</option>
+                                </select>
+                                <p className="text-xs text-slate-500 mt-2">{t.rhComptaRefHint}</p>
+                            </div>
+                            <div className="pt-2 border-t border-slate-100">
+                                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">{t.rhSageServerTitle}</p>
+                                <p className="text-xs text-slate-500 mb-3">{t.rhSageServerHint}</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 mb-1">{t.rhSageRounding}</label>
+                                        <input
+                                            type="number"
+                                            min={1}
+                                            max={60}
+                                            value={sageR}
+                                            onChange={e => setSageR(Math.min(60, Math.max(1, parseInt(e.target.value, 10) || 15)))}
+                                            className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm font-mono"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-600 mb-1">{t.rhSageWorkday}</label>
+                                        <input
+                                            type="time"
+                                            value={sageW}
+                                            onChange={e => setSageW(e.target.value || '06:00')}
+                                            className="w-full bg-slate-50 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm font-mono"
+                                        />
+                                    </div>
+                                </div>
+                                <label className="flex items-start gap-2 mt-3 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        className="mt-0.5 rounded border-slate-300 text-indigo-600"
+                                        checked={sageA}
+                                        onChange={e => setSageA(e.target.checked)}
+                                    />
+                                    <span className="text-sm text-slate-800">{t.rhSageApply}</span>
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={saveSage}
+                                    disabled={sageBusy}
+                                    className="mt-3 w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-bold disabled:opacity-50"
+                                >
+                                    {sageBusy ? '…' : t.rhSageSave}
+                                </button>
+                            </div>
+
+                            <div className="pt-4 mt-4 border-t border-slate-200">
+                                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1">{t.rhTranchesTitle}</p>
+                                <p className="text-xs text-slate-500 mb-3">{t.rhTranchesDesc}</p>
+                                <div className="mb-3">
+                                    <label className="block text-xs font-bold text-slate-600 mb-1">{t.rhTranchesPause}</label>
+                                    <select
+                                        value={trCfg.sepAfterIndex}
+                                        onChange={e => {
+                                            const v = parseInt(e.target.value, 10);
+                                            setTrCfg(c => ({ ...c, sepAfterIndex: Number.isFinite(v) ? v : -1 }));
+                                        }}
+                                        className="w-full max-w-xs bg-slate-50 border-2 border-slate-200 rounded-lg px-3 py-2 text-sm"
+                                    >
+                                        <option value={-1}>{t.rhTranchesNone}</option>
+                                        {Array.from({ length: Math.max(0, trCfg.slots.length - 1) }, (_, i) => {
+                                            const s = trCfg.slots[i];
+                                            return (
+                                                <option key={i} value={i}>
+                                                    {i + 1} — {s?.label ?? ''} (colonne « — » avant la tranche suivante)
+                                                </option>
+                                            );
+                                        })}
+                                    </select>
+                                </div>
+                                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                                    {trCfg.slots.map((row, idx) => (
+                                        <div key={idx} className="flex flex-wrap items-end gap-2 bg-slate-50/80 border border-slate-200 rounded-lg p-2">
+                                            <div className="min-w-[100px] flex-1">
+                                                <label className="block text-[10px] font-bold text-slate-500 uppercase">{t.rhTranchesLabel}</label>
+                                                <input
+                                                    value={row.label}
+                                                    onChange={e => updateTrSlot(idx, { label: e.target.value })}
+                                                    className="w-full bg-white border border-slate-200 rounded px-2 py-1.5 text-sm"
+                                                />
+                                            </div>
+                                            <div className="w-24">
+                                                <label className="block text-[10px] font-bold text-slate-500 uppercase">{t.rhTranchesStart}</label>
+                                                <input
+                                                    type="time"
+                                                    value={row.start}
+                                                    onChange={e => updateTrSlot(idx, { start: e.target.value })}
+                                                    className="w-full bg-white border border-slate-200 rounded px-2 py-1.5 text-sm font-mono"
+                                                />
+                                            </div>
+                                            <div className="w-24">
+                                                <label className="block text-[10px] font-bold text-slate-500 uppercase">{t.rhTranchesEnd}</label>
+                                                <input
+                                                    type="time"
+                                                    value={row.end}
+                                                    onChange={e => updateTrSlot(idx, { end: e.target.value })}
+                                                    className="w-full bg-white border border-slate-200 rounded px-2 py-1.5 text-sm font-mono"
+                                                />
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => removeTrSlot(idx)}
+                                                disabled={trCfg.slots.length <= 2}
+                                                className="p-2 rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-30"
+                                                title={t.rhTranchesDel}
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="flex flex-wrap gap-2 mt-3">
+                                    <button
+                                        type="button"
+                                        onClick={addTrSlot}
+                                        className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-indigo-50 text-indigo-800 text-xs font-bold border border-indigo-200"
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                        {t.rhTranchesAdd}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={resetTranches}
+                                        className="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-bold"
+                                    >
+                                        {t.rhTranchesReset}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={saveTranches}
+                                        disabled={trBusy}
+                                        className="px-4 py-2 rounded-lg bg-slate-800 text-white text-xs font-bold disabled:opacity-50"
+                                    >
+                                        {trBusy ? '…' : t.rhTranchesSave}
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -512,6 +833,117 @@ export default function Configuration({ settings, setSettings, lang }: Configura
                                                     <span className="text-sm text-slate-400 font-bold bg-slate-50 px-5 py-2 rounded-full border border-slate-100">Aucun personnel affecté</span>
                                                 </div>
                                             )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <hr className="border-slate-100" />
+
+                    <div className="mt-10">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center border border-indigo-100">
+                                <Factory className="w-5 h-5" />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-black text-slate-800 tracking-tight">
+                                    {lang === 'fr' ? 'Machines par chaîne (planning)' : 'الماكينات حسب الخط (التخطيط)'}
+                                </h3>
+                                <p className="text-xs text-slate-500 mt-0.5 font-medium max-w-3xl">
+                                    {lang === 'fr'
+                                        ? 'Cochez les machines réellement sur chaque ligne. Par défaut (aucune sélection enregistrée), le planning utilise tout le parc actif hors panne / maintenance. Réduire la liste force la vérification « gamme vs machines » sur ce sous-ensemble.'
+                                        : 'اختر الماكينات الفعلية لكل خط. بدون اختيار محفوظ يستخدم التخطيط كامل الماكينات النشطة الصالحة.'}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-6">
+                            {Array.from({ length: settings.chainsCount }).map((_, i) => {
+                                const chainKey = `CHAINE ${i + 1}`;
+                                const baseIds = machines.filter(isMachineOperational).map(m => m.id);
+                                const explicit = settings.chainMachines?.[chainKey];
+                                const selected =
+                                    explicit != null && explicit.length > 0 ? explicit.filter(id => baseIds.includes(id)) : baseIds;
+                                const chainDisplayName = settings.chainNames?.[chainKey] || chainKey;
+                                return (
+                                    <div
+                                        key={`cm-${chainKey}`}
+                                        className="bg-white border-2 border-slate-100 rounded-3xl overflow-hidden shadow-sm p-5 flex flex-col gap-3"
+                                    >
+                                        <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                                            <span className="font-black text-slate-800 text-sm">{chainDisplayName}</span>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    setSettings(prev => {
+                                                        const cm = { ...(prev.chainMachines || {}) };
+                                                        delete cm[chainKey];
+                                                        const keys = Object.keys(cm);
+                                                        return { ...prev, chainMachines: keys.length ? cm : undefined };
+                                                    })
+                                                }
+                                                className="text-[10px] font-bold uppercase text-indigo-600 hover:text-indigo-800 px-2 py-1 rounded-lg hover:bg-indigo-50"
+                                            >
+                                                {lang === 'fr' ? 'Tout le parc' : 'الكل'}
+                                            </button>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto custom-scrollbar">
+                                            {machines
+                                                .filter(m => m.active)
+                                                .map(m => {
+                                                    const usable = isMachineOperational(m);
+                                                    const checked = usable && selected.includes(m.id);
+                                                    return (
+                                                        <label
+                                                            key={`${chainKey}-${m.id}`}
+                                                            className={`inline-flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-[11px] font-bold cursor-pointer select-none ${
+                                                                usable
+                                                                    ? 'border-slate-200 bg-slate-50 hover:border-indigo-200'
+                                                                    : 'border-slate-100 bg-slate-50/60 text-slate-400 cursor-not-allowed'
+                                                            }`}
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                                                checked={checked}
+                                                                disabled={!usable}
+                                                                onChange={() => {
+                                                                    if (!usable) return;
+                                                                    setSettings(prev => {
+                                                                        const b = machines.filter(isMachineOperational).map(x => x.id);
+                                                                        const cur =
+                                                                            prev.chainMachines?.[chainKey]?.length
+                                                                                ? prev.chainMachines![chainKey]!
+                                                                                : [...b];
+                                                                        const on = cur.includes(m.id);
+                                                                        const next = on
+                                                                            ? cur.filter(id => id !== m.id)
+                                                                            : [...cur, m.id];
+                                                                        const sortedB = [...b].sort().join(',');
+                                                                        const sortedN = [...next].sort().join(',');
+                                                                        const cm = { ...(prev.chainMachines || {}) };
+                                                                        if (next.length === 0 || sortedB === sortedN) {
+                                                                            delete cm[chainKey];
+                                                                        } else {
+                                                                            cm[chainKey] = next;
+                                                                        }
+                                                                        const keys = Object.keys(cm);
+                                                                        return {
+                                                                            ...prev,
+                                                                            chainMachines: keys.length ? cm : undefined,
+                                                                        };
+                                                                    });
+                                                                }}
+                                                            />
+                                                            <span className="font-mono text-slate-700">{m.classe}</span>
+                                                            <span className="text-slate-500 font-medium truncate max-w-[100px]">{m.name}</span>
+                                                            {!usable && m.status && (
+                                                                <span className="text-[9px] uppercase text-amber-600">{m.status}</span>
+                                                            )}
+                                                        </label>
+                                                    );
+                                                })}
                                         </div>
                                     </div>
                                 );

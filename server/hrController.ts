@@ -1,8 +1,23 @@
+import { randomUUID } from 'crypto';
 import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
 import db from './db';
+import { ensurePersonLinkAfterWorkerUpsert } from './hrIdentityController';
+import { calculerHeures, type HeuresResult } from '../lib/calculerHeuresPointage';
+import { getSageTimesForHeuresCalc } from '../lib/sageTimeRules';
+import { getSageRulesForUser } from './sageConfig';
+import { monthYMBounds, sagePayRowForOwnerAndPointage, type SageMoisPointageRow } from './sageMonthPay';
+export type { HeuresResult } from '../lib/calculerHeuresPointage';
 
-const uid = () => `hr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-const uuidv4 = uid; // alias — no uuid package needed
+const newHrId = () => `hr-${randomUUID()}`;
+const uuidv4 = newHrId;
+
+/** Ne jamais exposer `pin_hash` au client. */
+function sanitizeHrWorkerRow(row: Record<string, unknown>): Record<string, unknown> {
+    const o = { ...row };
+    delete o.pin_hash;
+    return o;
+}
 
 // ==========================================
 // WORKERS CRUD
@@ -11,9 +26,21 @@ const uuidv4 = uid; // alias — no uuid package needed
 export const getHRWorkers = (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     try {
-        const stmt = db.prepare('SELECT * FROM hr_workers WHERE owner_id = ? ORDER BY full_name ASC');
-        const workers = stmt.all(userId);
-        res.json(workers);
+        const { search, role, chaine, active } = req.query as Record<string, string>;
+        let q =
+            'SELECT w.*, l.person_id AS person_id FROM hr_workers w LEFT JOIN hr_worker_person l ON l.hr_worker_id = w.id WHERE w.owner_id = ?';
+        const params: any[] = [userId];
+        if (active === '1') { q += ' AND w.is_active = 1'; }
+        if (role) { q += ' AND w.role = ?'; params.push(role); }
+        if (chaine) { q += ' AND w.chaine_id = ?'; params.push(chaine); }
+        if (search) {
+            q += ' AND (w.full_name LIKE ? OR w.matricule LIKE ? OR w.cin LIKE ?)';
+            const like = `%${search}%`;
+            params.push(like, like, like);
+        }
+        q += ' ORDER BY w.full_name ASC';
+        const rows = db.prepare(q).all(...params) as Record<string, unknown>[];
+        res.json(rows.map(sanitizeHrWorkerRow));
     } catch (error) {
         console.error('getHRWorkers Error:', error);
         res.status(500).json({ message: 'Erreur' });
@@ -23,8 +50,16 @@ export const getHRWorkers = (req: Request, res: Response) => {
 export const getHRWorkerById = (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     try {
-        const worker = db.prepare('SELECT * FROM hr_workers WHERE id = ? AND owner_id = ?').get(req.params.id, userId);
-        res.json(worker);
+        const worker = db
+            .prepare(
+                `SELECT w.*, l.person_id AS person_id,
+            CASE WHEN w.pin_hash IS NOT NULL AND length(trim(w.pin_hash)) > 0 THEN 1 ELSE 0 END AS has_pin
+         FROM hr_workers w
+         LEFT JOIN hr_worker_person l ON l.hr_worker_id = w.id
+         WHERE w.id = ? AND w.owner_id = ?`
+            )
+            .get(req.params.id, userId) as Record<string, unknown> | undefined;
+        res.json(worker ? sanitizeHrWorkerRow(worker) : null);
     } catch(e) {
         res.status(500).json({message: 'Erreur'});
     }
@@ -60,7 +95,90 @@ export const saveHRWorker = (req: Request, res: Response) => {
             data.salaire_base || 0, data.taux_horaire || 0, data.taux_piece || 0, data.prime_assiduite || 0, data.prime_transport || 0,
             data.mode_paiement || 'VIREMENT', userId
         );
-        res.json({ message: 'Enregistré', id: workerId });
+        let person_id: string;
+        try {
+            ({ person_id } = ensurePersonLinkAfterWorkerUpsert(db, workerId, userId, data.link_person_id ?? null));
+        } catch (e: any) {
+            if (e?.message === 'INVALID_PERSON_ID') {
+                return res.status(400).json({ message: 'link_person_id inconnu (platform_person)' });
+            }
+            throw e;
+        }
+        res.json({ message: 'Enregistré', id: workerId, person_id });
+    } catch (e: any) {
+        if (e?.code === 'SQLITE_CONSTRAINT_UNIQUE' && data.cin) {
+            const dup = db
+                .prepare('SELECT id, full_name, matricule, owner_id FROM hr_workers WHERE cin = ?')
+                .get(String(data.cin).trim()) as
+                | { id: string; full_name: string; matricule: string; owner_id: number }
+                | undefined;
+            return res.status(409).json({
+                code: 'CIN_DUPLICATE',
+                message:
+                    'Ce CIN existe déjà. Aucune fusion automatique (Section 23) — utiliser link_person_id ou résoudre le doublon manuellement.',
+                existing: dup || null,
+            });
+        }
+        if (e?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+            return res.status(409).json({
+                code: 'UNIQUE_VIOLATION',
+                message: 'Matricule ou autre contrainte unique violée',
+            });
+        }
+        console.error('saveHRWorker', e);
+        res.status(500).json({ message: 'Erreur' });
+    }
+};
+
+/** Définit ou remplace le PIN ouvrier (BERAOUVIER) — chiffres 4–8, hash bcrypt. */
+export const postHRWorkerPin = (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { id } = req.params;
+    const pin = String((req.body as { pin?: string })?.pin ?? '').trim();
+    if (!/^\d{4,8}$/.test(pin)) {
+        return res.status(400).json({ message: 'PIN : 4 à 8 chiffres uniquement' });
+    }
+    try {
+        const ok = db.prepare('SELECT id FROM hr_workers WHERE id = ? AND owner_id = ?').get(id, userId);
+        if (!ok) {
+            return res.status(404).json({ message: 'Ouvrier introuvable' });
+        }
+        const pin_hash = bcrypt.hashSync(pin, 10);
+        db.prepare('UPDATE hr_workers SET pin_hash = ?, updated_at = datetime("now") WHERE id = ? AND owner_id = ?').run(
+            pin_hash,
+            id,
+            userId
+        );
+        res.json({ message: 'PIN enregistré' });
+    } catch (e) {
+        console.error('postHRWorkerPin', e);
+        res.status(500).json({ message: 'Erreur' });
+    }
+};
+
+/** BERAOUVIER : vérification CIN + PIN (sans JWT). */
+export const postWorkerPinVerify = (req: Request, res: Response) => {
+    const cin = String(req.params.cin ?? '').trim();
+    const pin = String((req.body as { pin?: string })?.pin ?? '').trim();
+    if (!cin || !pin) {
+        return res.status(400).json({ message: 'CIN et pin requis' });
+    }
+    try {
+        const row = db
+            .prepare(
+                `SELECT w.pin_hash, l.person_id FROM hr_workers w
+         LEFT JOIN hr_worker_person l ON l.hr_worker_id = w.id
+         WHERE w.cin = ? AND w.is_active = 1`
+            )
+            .get(cin) as { pin_hash: string | null; person_id: string | null } | undefined;
+        if (!row?.pin_hash) {
+            return res.status(401).json({ ok: false, message: 'PIN non configuré ou CIN inconnu' });
+        }
+        const ok = bcrypt.compareSync(pin, row.pin_hash);
+        if (!ok) {
+            return res.status(401).json({ ok: false, message: 'PIN incorrect' });
+        }
+        res.json({ ok: true, person_id: row.person_id || null });
     } catch (e) {
         res.status(500).json({ message: 'Erreur' });
     }
@@ -72,6 +190,171 @@ export const deleteHRWorker = (req: Request, res: Response) => {
         db.prepare('DELETE FROM hr_workers WHERE id = ? AND owner_id = ?').run(req.params.id, userId);
         res.json({ message: 'Supprimé' });
     } catch (e) {
+        res.status(500).json({ message: 'Erreur' });
+    }
+};
+
+function firstLastDayOfMonth(ym: string): { from: string; to: string } | null {
+    const p = /^(\d{4})-(\d{2})$/.exec(ym);
+    if (!p) return null;
+    const Y = parseInt(p[1], 10);
+    const M = parseInt(p[2], 10);
+    const from = `${ym}-01`;
+    const lastD = new Date(Y, M, 0).getDate();
+    const to = `${ym}-${String(lastD).padStart(2, '0')}`;
+    return { from, to };
+}
+
+/**
+ * Dossier unique worker : fiche, pointage & prod sur période, avances, aperçu Sage (mois), compétences (legacy `workers` via matricule).
+ * Query: pointage_mois=YYYY-MM (défaut: mois courant), from=, to= (optionnel, remplace le mois)
+ */
+export const getHRWorkerDossier = (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    const { id } = req.params;
+    const qf = (req.query.from as string) || '';
+    const qt = (req.query.to as string) || '';
+    const moisQ = (req.query.pointage_mois as string) || new Date().toISOString().slice(0, 7);
+    let dateFrom: string;
+    let dateTo: string;
+    if (qf && qt && /^\d{4}-\d{2}-\d{2}$/.test(qf) && /^\d{4}-\d{2}-\d{2}$/.test(qt)) {
+        dateFrom = qf;
+        dateTo = qt;
+    } else {
+        const fl = firstLastDayOfMonth(moisQ);
+        if (!fl) {
+            return res.status(400).json({ message: 'pointage_mois invalide (attendu YYYY-MM)' });
+        }
+        dateFrom = fl.from;
+        dateTo = fl.to;
+    }
+
+    try {
+        const worker = db
+            .prepare(
+                `SELECT w.*, l.person_id AS person_id,
+            CASE WHEN w.pin_hash IS NOT NULL AND length(trim(w.pin_hash)) > 0 THEN 1 ELSE 0 END AS has_pin
+         FROM hr_workers w
+         LEFT JOIN hr_worker_person l ON l.hr_worker_id = w.id
+         WHERE w.id = ? AND w.owner_id = ?`
+            )
+            .get(id, userId) as Record<string, unknown> | undefined;
+        if (!worker) {
+            return res.status(404).json({ message: 'Ouvrier introuvable' });
+        }
+        const wid = id;
+
+        const pointage = db
+            .prepare(
+                `SELECT * FROM hr_pointage WHERE worker_id = ? AND date >= ? AND date <= ? ORDER BY date DESC, id DESC`
+            )
+            .all(wid, dateFrom, dateTo);
+
+        const production = db
+            .prepare(
+                `SELECT * FROM hr_production WHERE worker_id = ? AND date >= ? AND date <= ? ORDER BY date DESC, id DESC`
+            )
+            .all(wid, dateFrom, dateTo);
+
+        const avances = db
+            .prepare(
+                `SELECT a.*, w.full_name, w.salaire_base, w.matricule 
+         FROM hr_avances a 
+         JOIN hr_workers w ON a.worker_id = w.id 
+         WHERE a.worker_id = ? AND w.owner_id = ? 
+         ORDER BY a.date_demande DESC`
+            )
+            .all(wid, userId);
+
+        const moisSage = (req.query.pointage_mois as string) || new Date().toISOString().slice(0, 7);
+        const w = worker as {
+            taux_horaire: number;
+            prime_assiduite: number;
+            prime_transport: number;
+            matricule: string;
+            full_name: string;
+            cin: string | null;
+        };
+        const bSage = monthYMBounds(moisSage);
+        const pa = Number(w.prime_assiduite) || 0;
+        const ptr = Number(w.prime_transport) || 0;
+        const primesSeules = pa + ptr;
+        let sage_preview: {
+            mois: string;
+            matricule: string;
+            nom: string;
+            cin: string | null;
+            nb_jours: number;
+            total_brut: number;
+            net_a_payer: number;
+        };
+        if (bSage) {
+            const ptRows = db
+                .prepare(
+                    `SELECT heure_entree, heure_sortie, pause_debut, pause_fin, date, statut,
+    heures_normales, heures_supp_25, heures_supp_50, heures_travaillees
+    FROM hr_pointage
+    WHERE worker_id = ? AND date >= ? AND date <= ? AND statut = 'PRESENT'
+    ORDER BY date ASC, id ASC`,
+                )
+                .all(wid, bSage.from, bSage.to) as SageMoisPointageRow[];
+            const r = sagePayRowForOwnerAndPointage(userId, { id: String(wid), ...w }, ptRows);
+            sage_preview = {
+                mois: moisSage,
+                matricule: r.matricule,
+                nom: r.nom,
+                cin: r.cin,
+                nb_jours: r.nb_jours,
+                total_brut: r.total_brut,
+                net_a_payer: r.net_a_payer,
+            };
+        } else {
+            sage_preview = {
+                mois: moisSage,
+                matricule: w.matricule,
+                nom: w.full_name,
+                cin: w.cin,
+                nb_jours: 0,
+                total_brut: primesSeules,
+                net_a_payer: primesSeules,
+            };
+        }
+
+        const mat = String((worker as { matricule: string }).matricule || '');
+        const legacy = db
+            .prepare('SELECT id FROM workers WHERE owner_id = ? AND matricule = ?')
+            .get(userId, mat) as { id: string } | undefined;
+        let skills: any[] = [];
+        let skills_matched = false;
+        if (legacy) {
+            skills = db
+                .prepare(
+                    'SELECT * FROM worker_skills WHERE owner_id = ? AND worker_id = ? ORDER BY level DESC, poste_keyword ASC'
+                )
+                .all(userId, legacy.id);
+            skills_matched = true;
+        }
+
+        const safeWorker = sanitizeHrWorkerRow(worker as Record<string, unknown>);
+        res.json({
+            worker: safeWorker,
+            pointage,
+            production,
+            avances,
+            sage_preview,
+            skills,
+            skills_matched,
+            skills_note: skills_matched
+                ? 'Compétences (module effectifs classique, même matricule).'
+                : 'Aucun homonyme matricule dans l’ancien effectifs — compétences vides. Utilisez l’effectif classique ou un futur module RH compétences.',
+            meta: {
+                pointage_mois: moisQ,
+                date_from: dateFrom,
+                date_to: dateTo,
+            },
+        });
+    } catch (e) {
+        console.error('getHRWorkerDossier', e);
         res.status(500).json({ message: 'Erreur' });
     }
 };
@@ -92,95 +375,13 @@ export const getHRPointage = (req: Request, res: Response) => {
     } catch (e) { res.status(500).json({message: 'Erreur'}); }
 };
 
-export interface HeuresResult {
-    normales: number;
-    supp25: number;
-    supp50: number;
-    travaillees: number;
-}
+export { calculerHeures };
 
-export function calculerHeures(entree: string | null, sortie: string | null, pauseDebut: string | null, pauseFin: string | null, dateStr: string): HeuresResult {
-    if (!entree || !sortie) {
-        return { normales: 0, supp25: 0, supp50: 0, travaillees: 0 };
-    }
-
-    const parseTime = (t: string) => {
-        const [h, m] = t.split(':').map(Number);
-        return h + (m / 60);
-    };
-
-    let tEnt = parseTime(entree);
-    let tSor = parseTime(sortie);
-    if (tSor < tEnt) tSor += 24;
-
-    const calcOverlap = (start: number, end: number, intervals: number[][]) => {
-        let overlap = 0;
-        for (const [iStart, iEnd] of intervals) {
-            const s = Math.max(start, iStart);
-            const e = Math.min(end, iEnd);
-            if (e > s) overlap += (e - s);
-        }
-        return overlap;
-    };
-
-    const nightIntervals = [[0, 6], [21, 30], [45, 54]];
-    let totalNight = calcOverlap(tEnt, tSor, nightIntervals);
-    let totalTime = tSor - tEnt;
-
-    if (pauseDebut && pauseFin) {
-        let pEnt = parseTime(pauseDebut);
-        let pSor = parseTime(pauseFin);
-        if (pSor < pEnt) pSor += 24;
-
-        if (pEnt < tEnt && pEnt + 24 <= tSor) {
-            pEnt += 24;
-            pSor += 24;
-        }
-
-        const pauseNight = calcOverlap(pEnt, pSor, nightIntervals);
-        const pauseTotal = Math.max(0, pSor - pEnt);
-
-        totalNight = Math.max(0, totalNight - pauseNight);
-        totalTime = Math.max(0, totalTime - pauseTotal);
-    }
-
-    const dateObj = new Date(dateStr);
-    const dayOfWeek = dateObj.getDay();
-    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-    let normales = 0;
-    let supp25 = 0;
-    let supp50 = 0;
-
-    if (isWeekend) {
-        supp50 = totalTime;
-    } else {
-        const actualNight = totalNight;
-        const actualDay = Math.max(0, totalTime - actualNight);
-
-        supp50 += actualNight;
-
-        let remaining = actualDay;
-        
-        normales = Math.min(8, remaining);
-        remaining -= normales;
-
-        const possible25 = Math.min(2, remaining);
-        supp25 += possible25;
-        remaining -= possible25;
-
-        supp50 += remaining;
-    }
-
-    const round2 = (n: number) => Math.round(n * 100) / 100;
-    return {
-        normales: round2(normales),
-        supp25: round2(supp25),
-        supp50: round2(supp50),
-        travaillees: round2(totalTime)
-    };
-}
-
+/**
+ * Pointage : `heure_*` / `pause_*` en base = saisie brute (affichage / vérité terrain).
+ * Les colonnes `heures_*` lorsque `hr_auto_overtime` est actif viennent de `calculerHeures`
+ * appliqué aux heures **ajustées SAGE** (`getSageTimesForHeuresCalc` + `getSageRulesForUser`).
+ */
 export const saveHRPointage = (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     const records = Array.isArray(req.body) ? req.body : [req.body];
@@ -196,13 +397,14 @@ export const saveHRPointage = (req: Request, res: Response) => {
     }
 
     try {
+        const sageRules = getSageRulesForUser(userId);
         const transaction = db.transaction(() => {
             const stmt = db.prepare(`
                 INSERT INTO hr_pointage (
                     id, worker_id, date, heure_entree, heure_sortie, pause_debut, pause_fin, 
-                    heures_travaillees, heures_normales, heures_supp_25, heures_supp_50, statut, motif_absence
+                    heures_travaillees, heures_normales, heures_supp_25, heures_supp_50, statut, motif_absence, grille_presence
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(worker_id, date) DO UPDATE SET 
                     heure_entree=excluded.heure_entree, 
                     heure_sortie=excluded.heure_sortie, 
@@ -213,11 +415,23 @@ export const saveHRPointage = (req: Request, res: Response) => {
                     heures_supp_25=excluded.heures_supp_25,
                     heures_supp_50=excluded.heures_supp_50,
                     statut=excluded.statut,
-                    motif_absence=excluded.motif_absence
+                    motif_absence=excluded.motif_absence,
+                    grille_presence=excluded.grille_presence
             `);
             for (const r of records) {
                 const w = db.prepare('SELECT id FROM hr_workers WHERE id = ? AND owner_id = ?').get(r.worker_id, userId);
                 if (w) {
+                    const hasGrilleKey = Object.prototype.hasOwnProperty.call(r, 'grille_presence');
+                    let grillePresence: string | null;
+                    if (hasGrilleKey) {
+                        grillePresence = (r as { grille_presence?: string | null }).grille_presence ?? null;
+                    } else {
+                        const ex = db
+                            .prepare('SELECT grille_presence FROM hr_pointage WHERE worker_id = ? AND date = ?')
+                            .get(r.worker_id, r.date) as { grille_presence?: string | null } | undefined;
+                        grillePresence = ex?.grille_presence ?? null;
+                    }
+
                     const hEntree = r.heureEntree || r.heure_entree || null;
                     const hSortie = r.heureSortie || r.heure_sortie || null;
                     const pDebut = r.pauseDebut || r.pause_debut || null;
@@ -228,7 +442,8 @@ export const saveHRPointage = (req: Request, res: Response) => {
                     let s25 = Number(r.heuresSupp25 || r.heures_supp_25 || 0);
                     let s50 = Number(r.heuresSupp50 || r.heures_supp_50 || 0);
 
-                    const calc = calculerHeures(hEntree, hSortie, pDebut, pFin, r.date);
+                    const tSage = getSageTimesForHeuresCalc(hEntree, hSortie, pDebut, pFin, sageRules);
+                    const calc = calculerHeures(tSage.entree, tSage.sortie, tSage.pauseDebut, tSage.pauseFin, r.date);
 
                     if (autoOvertime) {
                         travail = calc.travaillees;
@@ -257,7 +472,8 @@ export const saveHRPointage = (req: Request, res: Response) => {
                         s25, 
                         s50, 
                         r.statut, 
-                        r.motif_absence || null
+                        r.motif_absence || null,
+                        grillePresence
                     );
                 }
             }
@@ -285,9 +501,12 @@ export const validateHRPointage = (req: Request, res: Response) => {
 export const getHRProduction = (req: Request, res: Response) => {
     const userId = (req as any).user.id;
     try {
-        let q = `SELECT prod.*, w.full_name FROM hr_production prod JOIN hr_workers w ON prod.worker_id = w.id WHERE w.owner_id=?`;
-        if (req.query.date) q += ` AND prod.date = '${req.query.date}'`;
-        res.json(db.prepare(q).all(userId));
+        const date = req.query.date as string | undefined;
+        if (date) {
+            res.json(db.prepare(`SELECT prod.*, w.full_name FROM hr_production prod JOIN hr_workers w ON prod.worker_id = w.id WHERE w.owner_id=? AND prod.date = ?`).all(userId, date));
+        } else {
+            res.json(db.prepare(`SELECT prod.*, w.full_name FROM hr_production prod JOIN hr_workers w ON prod.worker_id = w.id WHERE w.owner_id=?`).all(userId));
+        }
     } catch(e) { res.status(500).json({message:'Erreur'}); }
 };
 
@@ -310,28 +529,126 @@ export const getHRAvances = (req: Request, res: Response) => {
     res.json(db.prepare(`SELECT a.*, w.full_name, w.salaire_base FROM hr_avances a JOIN hr_workers w ON a.worker_id = w.id WHERE w.owner_id = ?`).all((req as any).user.id));
 };
 export const saveHRAvance = (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
     const a = req.body;
-    db.prepare(`INSERT INTO hr_avances (id, worker_id, date_demande, montant) VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET montant=excluded.montant`).run(a.id||uuidv4(), a.worker_id, a.date_demande, a.montant);
-    res.json({message: 'Saved'});
+    try {
+        const worker = db.prepare('SELECT id, salaire_base FROM hr_workers WHERE id = ? AND owner_id = ?').get(a.worker_id, userId) as { id: string, salaire_base: number } | undefined;
+        if (!worker) {
+            return res.status(403).json({ message: 'Interdit' });
+        }
+
+        // Article 385: Plafond de déduction = 10% du salaire. 
+        // Ici on valide que l'avance demandée est raisonnable ou on prépare le terrain pour le calcul de paie.
+        const plafondMensuel = (worker.salaire_base || 0) * 0.1;
+        if (a.montant > worker.salaire_base * 3) {
+             return res.status(400).json({ message: `Le montant de l'avance (${a.montant} MAD) dépasse la limite autorisée (max 3x salaire de base).` });
+        }
+
+        db.prepare(
+            `INSERT INTO hr_avances (id, worker_id, date_demande, montant, solde_restant, statut) 
+             VALUES (?,?,?,?,?,?) 
+             ON CONFLICT(id) DO UPDATE SET montant=excluded.montant, solde_restant=excluded.solde_restant`
+        ).run(a.id || uuidv4(), a.worker_id, a.date_demande, a.montant, a.montant, 'DEMANDE');
+        res.json({ message: 'Avance enregistrée (Soumise à validation)' });
+    } catch (e) {
+        res.status(500).json({ message: 'Erreur' });
+    }
 };
 export const updateHRAvanceStatut = (req: Request, res: Response) => {
-    db.prepare(`UPDATE hr_avances SET statut=? WHERE id=?`).run(req.body.statut, req.params.id);
-    res.json({message: 'Updated'});
+    const userId = (req as any).user.id;
+    try {
+        const result = db
+            .prepare(
+                `UPDATE hr_avances SET statut = ? WHERE id = ? AND worker_id IN (SELECT id FROM hr_workers WHERE owner_id = ?)`
+            )
+            .run(req.body.statut, req.params.id, userId);
+        if (result.changes === 0) {
+            return res.status(404).json({ message: 'Non trouvé' });
+        }
+        res.json({ message: 'Updated' });
+    } catch (e) {
+        res.status(500).json({ message: 'Erreur' });
+    }
 };
 
 // ==========================================
 // WORKERS APP (READ-ONLY)
 // ==========================================
 
-export const getWorkerByCin = (req: Request, res: Response) => {
+/** Compte local invité (db.ts) — fiches importées/test souvent rattachées à user id 1 */
+const LEGACY_GUEST_OWNER_ID = 1;
+
+/** Aperçu: ouvriers du compte courant vs fiches restées sur l’invité (id 1) */
+export const getHRClaimPreview = (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
     try {
-        const worker = db.prepare('SELECT id, full_name, role, chaine_id FROM hr_workers WHERE cin = ?').get(req.params.cin);
-        res.json(worker || null);
-    } catch(e) { res.status(500).json({}); }
+        const my = db.prepare('SELECT COUNT(*) as c FROM hr_workers WHERE owner_id = ?').get(userId) as { c: number };
+        const guest = db
+            .prepare('SELECT COUNT(*) as c FROM hr_workers WHERE owner_id = ?')
+            .get(LEGACY_GUEST_OWNER_ID) as { c: number };
+        const canClaim =
+            userId !== LEGACY_GUEST_OWNER_ID && my.c === 0 && guest.c > 0;
+        res.json({ myCount: my.c, guestCount: userId === LEGACY_GUEST_OWNER_ID ? 0 : guest.c, canClaim });
+    } catch (e) {
+        res.status(500).json({ message: 'Erreur' });
+    }
 };
 
+/**
+ * Rattache toutes les fiches de l’invité (id 1) au compte connecté.
+ * Uniquement si l’utilisateur n’a encore aucun ouvrier (évite les écrasements en multi-compte).
+ */
+export const postHRClaimFromGuest = (req: Request, res: Response) => {
+    const userId = (req as any).user.id;
+    if (userId === LEGACY_GUEST_OWNER_ID) {
+        return res.status(400).json({ message: 'Déjà connecté en invité' });
+    }
+    try {
+        const my = db.prepare('SELECT COUNT(*) as c FROM hr_workers WHERE owner_id = ?').get(userId) as { c: number };
+        if (my.c > 0) {
+            return res.status(400).json({ message: 'Vous avez déjà des fiches. Le rattachement n’est possible qu’avec un compte sans ouvrier.' });
+        }
+        const guest = db
+            .prepare('SELECT COUNT(*) as c FROM hr_workers WHERE owner_id = ?')
+            .get(LEGACY_GUEST_OWNER_ID) as { c: number };
+        if (guest.c === 0) {
+            return res.status(400).json({ message: 'Aucune fiche à rattacher (compte invité vide).' });
+        }
+        const r = db.prepare('UPDATE hr_workers SET owner_id = ? WHERE owner_id = ?').run(userId, LEGACY_GUEST_OWNER_ID);
+        res.json({ ok: true, migrated: r.changes });
+    } catch (e) {
+        res.status(500).json({ message: 'Erreur' });
+    }
+};
+
+export const getWorkerByCin = (req: Request, res: Response) => {
+    try {
+        const worker = db
+            .prepare(
+                `SELECT w.id, w.full_name, w.role, w.chaine_id, l.person_id AS person_id,
+            CASE WHEN w.pin_hash IS NOT NULL AND length(trim(w.pin_hash)) > 0 THEN 1 ELSE 0 END AS has_pin
+         FROM hr_workers w
+         LEFT JOIN hr_worker_person l ON l.hr_worker_id = w.id
+         WHERE w.cin = ?`
+            )
+            .get(req.params.cin) as Record<string, unknown> | undefined;
+        res.json(worker || null);
+    } catch (e) {
+        res.status(500).json({});
+    }
+};
+
+/** BERAOUVIER: champs minimaux uniquement */
+const PUBLIC_POINTAGE_COLS = `date, statut, heure_entree, heure_sortie, heures_travaillees`;
+
 export const getWorkerPointageToday = (req: Request, res: Response) => {
-    res.json(db.prepare('SELECT * FROM hr_pointage WHERE worker_id = (SELECT id FROM hr_workers WHERE cin = ?) AND date = date("now")').get(req.params.cin) || null);
+    res.json(
+        db
+            .prepare(
+                `SELECT ${PUBLIC_POINTAGE_COLS} FROM hr_pointage WHERE worker_id = (SELECT id FROM hr_workers WHERE cin = ?) AND date = date('now')`
+            )
+            .get(req.params.cin) || null
+    );
 };
 
 export const getWorkerProductionToday = (req: Request, res: Response) => {

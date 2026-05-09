@@ -32,6 +32,13 @@ import {
 } from 'lucide-react';
 import { ModelData } from '../types';
 
+/** Auto-generate a short abbreviation from a model name (e.g. "Pantalon Homme Classic" → "PHC") */
+function getModelAbbrev(model: ModelData): string {
+    if (model.meta_data.reference) return model.meta_data.reference.toUpperCase().slice(0, 6);
+    const name = model.meta_data.nom_modele || '';
+    return name.split(/[\s\-_]+/).filter(Boolean).map(w => w[0]?.toUpperCase() || '').join('').slice(0, 5) || '?';
+}
+
 /** Texte indexé pour la recherche (fiche, méta, lignes de gamme, temps, quantités). */
 function buildLibrarySearchHaystack(m: ModelData): string {
     const parts: string[] = [];
@@ -88,6 +95,7 @@ interface LibraryProps {
     onCreateNewProject: () => void;
     onTransferToCoupe?: (model: ModelData) => void;
     onTransferToPlanning?: (model: ModelData) => void;
+    onStartSuivi?: (model: ModelData) => void;
 }
 
 export default function Library({
@@ -99,7 +107,8 @@ export default function Library({
     onRenameModel,
     onCreateNewProject,
     onTransferToCoupe,
-    onTransferToPlanning
+    onTransferToPlanning,
+    onStartSuivi
 }: LibraryProps) {
     const [searchQuery, setSearchQuery] = useState("");
     const [sortBy, setSortBy] = useState<"date" | "name" | "time">("date");
@@ -506,9 +515,14 @@ export default function Library({
                                                         className="w-full text-sm font-bold border-b-2 border-indigo-500 outline-none pb-1"
                                                     />
                                                 ) : (
-                                                    <h3 className="font-bold text-slate-800 text-sm truncate" title={model.meta_data.nom_modele}>
-                                                        {model.meta_data.nom_modele}
-                                                    </h3>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <h3 className="font-bold text-slate-800 text-sm truncate flex-1" title={model.meta_data.nom_modele}>
+                                                            {model.meta_data.nom_modele}
+                                                        </h3>
+                                                        <span className="shrink-0 text-[9px] font-black text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded-md tracking-wide">
+                                                            {getModelAbbrev(model)}
+                                                        </span>
+                                                    </div>
                                                 )}
                                                 {model.meta_data.date_lancement && (
                                                     <p className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1">
@@ -669,6 +683,20 @@ export default function Library({
                                 >
                                     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Z" /><path d="M16 2v4" /><path d="M8 2v4" /><path d="M3 10h18" /></svg>
                                     Transférer vers Planning
+                                </button>
+                            )}
+
+                            {onStartSuivi && (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        onStartSuivi(activeModel);
+                                        setContextMenu(null);
+                                    }}
+                                    className="w-full text-left px-4 py-2 text-xs font-bold text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 flex items-center gap-3 transition-colors"
+                                >
+                                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-5"/></svg>
+                                    Lancer Suivi
                                 </button>
                             )}
 

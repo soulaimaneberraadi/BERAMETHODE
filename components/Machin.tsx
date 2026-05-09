@@ -28,9 +28,14 @@ import { Machine, SpeedFactor, ComplexityFactor, StandardTime, Guide } from '../
 
 interface MachinProps {
   machines: Machine[];
-  onSave: (machine: Machine) => void;
-  onDelete: (id: string) => void;
-  onToggle: (id: string) => void;
+  onSaveMachine: (machine: Machine) => void;
+  onDeleteMachine: (id: string) => void;
+  onToggleMachine: (id: string) => void;
+  machineInstances?: any[];
+  onSaveMachineInstance?: any;
+  onDeleteMachineInstance?: any;
+  parcMachinesOpenSignal?: number;
+  onPurgeAllMachineClasses?: () => void;
   
   // Props for State Management
   speedFactors: SpeedFactor[];
@@ -49,9 +54,9 @@ interface MachinProps {
 
 export default function Machin({ 
   machines, 
-  onSave, 
-  onDelete, 
-  onToggle,
+  onSaveMachine, 
+  onDeleteMachine, 
+  onToggleMachine,
   speedFactors,
   setSpeedFactors,
   complexityFactors,
@@ -152,7 +157,7 @@ export default function Machin({
     setMachineErrors(nextErrors);
     if (nextErrors.name || nextErrors.classe) return;
     const toSave: Machine = { ...(machineForm as Machine), id: editingItem?.id || Date.now().toString() };
-    onSave(toSave);
+    onSaveMachine(toSave);
     closeModal();
   };
 
@@ -263,7 +268,7 @@ export default function Machin({
     if (!deleteData) return;
     const { type, id } = deleteData;
     
-    if (type === 'machine') onDelete(id);
+    if (type === 'machine') onDeleteMachine(id);
     else if (type === 'speed') setSpeedFactors(prev => prev.filter(i => i.id !== id));
     else if (type === 'complexity') setComplexityFactors(prev => prev.filter(i => i.id !== id));
     else if (type === 'time') setStandardTimes(prev => prev.filter(i => i.id !== id));
@@ -305,7 +310,7 @@ export default function Machin({
   );
 
   return (
-    <div className="h-full w-full overflow-y-auto p-4 md:p-6 custom-scrollbar space-y-6 pb-24">
+    <div className="w-full p-4 md:p-6 space-y-6">
       
       {/* HEADER WITH NAVIGATION */}
       <div className="flex flex-col gap-6">
@@ -418,6 +423,7 @@ export default function Machin({
                 <thead>
                   <tr className="bg-slate-50/80 border-b border-slate-100">
                     <th className="py-3 px-4 text-xs font-bold text-slate-600 uppercase tracking-wider">Machine</th>
+                    <th className="py-3 px-4 text-xs font-bold text-slate-600 uppercase tracking-wider text-center">Type</th>
                     <th className="py-3 px-4 text-xs font-bold text-slate-600 uppercase tracking-wider text-center">Classe</th>
                     <th className="py-3 px-4 text-xs font-bold text-slate-600 uppercase tracking-wider text-center">Vitesse</th>
                     <th className="py-3 px-4 text-xs font-bold text-slate-600 uppercase tracking-wider text-center">Majoration</th>
@@ -430,11 +436,12 @@ export default function Machin({
                   {filteredMachines.map((machine) => (
                     <tr key={machine.id} className={`group transition-colors hover:bg-slate-50/80 ${!machine.active ? 'opacity-60 bg-slate-50/50' : ''}`}>
                       <td className="py-2.5 px-4"><div className="flex items-center gap-3"><div className={`w-8 h-8 rounded-lg flex items-center justify-center ${machine.active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}><Scissors className="w-4 h-4" /></div><span className="font-semibold text-slate-700 text-sm">{machine.name}</span></div></td>
+                      <td className="py-2.5 px-4 text-center"><span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">{machine.machineCategory || '—'}</span></td>
                       <td className="py-2.5 px-4 text-center"><span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">{machine.classe}</span></td>
                       <td className="py-2.5 px-4 text-center text-slate-600 font-mono text-sm">{machine.speed}</td>
                       <td className="py-2.5 px-4 text-center text-slate-600 font-mono text-sm">{machine.speedMajor}</td>
                       <td className="py-2.5 px-4 text-center"><span className="font-bold text-slate-700 text-sm">{machine.cofs}</span></td>
-                      <td className="py-2.5 px-4 text-center"><button onClick={() => onToggle(machine.id)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${machine.active ? 'bg-emerald-500' : 'bg-slate-300'}`}><span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${machine.active ? 'translate-x-5' : 'translate-x-1'}`} /></button></td>
+                      <td className="py-2.5 px-4 text-center"><button onClick={() => onToggleMachine(machine.id)} className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${machine.active ? 'bg-emerald-500' : 'bg-slate-300'}`}><span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${machine.active ? 'translate-x-5' : 'translate-x-1'}`} /></button></td>
                       <td className="py-2.5 px-4 text-right"><div className="flex items-center justify-end gap-1"><button onClick={() => openMachineModal(machine)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"><Edit2 className="w-3.5 h-3.5" /></button><button onClick={() => setDeleteData({ type: 'machine', id: machine.id })} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"><Trash2 className="w-3.5 h-3.5" /></button></div></td>
                     </tr>
                   ))}
@@ -444,14 +451,52 @@ export default function Machin({
           </div>
           
            {/* MOBILE CARDS */}
-           <div className="grid grid-cols-1 gap-4 sm:hidden">
+           <div className="grid grid-cols-1 gap-3 sm:hidden">
             {filteredMachines.map((machine) => (
-              <div key={machine.id} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
-                 <div className="flex justify-between items-center mb-2">
-                    <span className="font-bold">{machine.name}</span>
-                    <button onClick={() => openMachineModal(machine)}><Edit2 className="w-4 h-4 text-slate-400"/></button>
-                 </div>
-                 <div className="text-sm text-slate-500">Classe: {machine.classe} | Vitesse: {machine.speed}</div>
+              <div key={machine.id} className={`bg-white rounded-2xl border border-slate-200/80 p-4 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)] transition-all duration-300 ${!machine.active ? 'opacity-60 bg-slate-50/50 grayscale-[0.2]' : ''}`}>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${machine.active ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-400'}`}>
+                      <Scissors className="w-5 h-5" />
+                    </div>
+                    <div className="min-w-0 pr-2">
+                      <h4 className="font-bold text-slate-800 text-sm sm:text-base leading-tight truncate">{machine.name}</h4>
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1 truncate">{machine.machineCategory || 'Standard'}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => onToggleMachine(machine.id)} className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${machine.active ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${machine.active ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 text-center flex flex-col justify-center">
+                    <span className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">Classe</span>
+                    <span className="font-mono text-slate-700 font-semibold text-[11px] sm:text-xs">{machine.classe}</span>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-2 border border-slate-100/80 text-center flex flex-col justify-center">
+                    <span className="block text-[8.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">Vitesse</span>
+                    <span className="font-mono text-slate-700 font-semibold text-[11px] sm:text-xs">{machine.speed}</span>
+                  </div>
+                  <div className="bg-emerald-50/50 rounded-lg p-2 border border-emerald-100/50 text-center flex flex-col justify-center">
+                    <span className="block text-[8.5px] font-bold text-emerald-600/70 uppercase tracking-wider mb-1">Major</span>
+                    <span className="font-mono text-emerald-700 font-bold text-[11px] sm:text-xs">{machine.speedMajor}</span>
+                  </div>
+                  <div className="bg-indigo-50/50 rounded-lg p-2 border border-indigo-100/50 text-center flex flex-col justify-center">
+                    <span className="block text-[8.5px] font-bold text-indigo-600/70 uppercase tracking-wider mb-1">COFS</span>
+                    <span className="font-mono text-indigo-700 font-bold text-[11px] sm:text-xs">{machine.cofs}</span>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button onClick={() => openMachineModal(machine)} className="flex-1 flex items-center justify-center gap-2 py-2 bg-slate-50 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl font-bold text-xs sm:text-sm transition-colors border border-slate-200 hover:border-emerald-200">
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>Modifier</span>
+                  </button>
+                  <button onClick={() => setDeleteData({ type: 'machine', id: machine.id })} className="w-10 sm:w-12 flex items-center justify-center bg-slate-50 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors border border-slate-200 hover:border-rose-200 shrink-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             ))}
            </div>
@@ -473,7 +518,7 @@ export default function Machin({
                 <Plus className="w-4 h-4" />
               </button>
             </div>
-            <div className="overflow-x-auto">
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500">
                   <tr>
@@ -499,6 +544,23 @@ export default function Machin({
                 </tbody>
               </table>
             </div>
+            
+            {/* MOBILE VIEW FOR COMPLEXITY FACTORS */}
+            <div className="grid grid-cols-1 gap-2 sm:hidden p-4">
+              {complexityFactors.map(item => (
+                <div key={item.id} className="bg-slate-50/50 rounded-xl border border-slate-100 p-3 flex items-center justify-between">
+                  <div className="min-w-0 pr-3">
+                    <p className="font-semibold text-slate-700 text-sm truncate">{item.label}</p>
+                    <span className="inline-block mt-1 px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[10px] font-bold">Majoration: {item.value}</span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => openComplexityModal(item)} className="p-2 text-slate-400 hover:text-indigo-600 bg-white rounded-lg border border-slate-200"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setDeleteData({type: 'complexity', id: item.id})} className="p-2 text-slate-400 hover:text-rose-600 bg-white rounded-lg border border-slate-200"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+              ))}
+              {complexityFactors.length === 0 && <p className="text-center text-slate-400 italic text-xs py-2">Aucun facteur défini.</p>}
+            </div>
           </div>
 
           {/* 2. FACTEURS DE VITESSE */}
@@ -512,7 +574,7 @@ export default function Machin({
                 <Plus className="w-4 h-4" />
               </button>
             </div>
-            <div className="overflow-x-auto">
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500">
                   <tr>
@@ -538,6 +600,23 @@ export default function Machin({
                 </tbody>
               </table>
             </div>
+
+            {/* MOBILE VIEW FOR SPEED FACTORS */}
+            <div className="grid grid-cols-1 gap-2 sm:hidden p-4">
+              {speedFactors.map(item => (
+                <div key={item.id} className="bg-slate-50/50 rounded-xl border border-slate-100 p-3 flex items-center justify-between">
+                  <div className="min-w-0 pr-3">
+                    <p className="font-semibold text-slate-700 text-sm truncate">{item.min} - {item.max} RPM</p>
+                    <span className="inline-block mt-1 px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded text-[10px] font-bold">Majoration: {item.value}</span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => openSpeedModal(item)} className="p-2 text-slate-400 hover:text-emerald-600 bg-white rounded-lg border border-slate-200"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setDeleteData({type: 'speed', id: item.id})} className="p-2 text-slate-400 hover:text-rose-600 bg-white rounded-lg border border-slate-200"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+              ))}
+              {speedFactors.length === 0 && <p className="text-center text-slate-400 italic text-xs py-2">Aucune plage définie.</p>}
+            </div>
           </div>
 
           {/* 3. TEMPS STANDARDS */}
@@ -551,7 +630,7 @@ export default function Machin({
                 <Plus className="w-4 h-4" />
               </button>
             </div>
-            <div className="overflow-x-auto">
+            <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-slate-50 text-[10px] uppercase font-bold text-slate-500">
                   <tr>
@@ -580,6 +659,23 @@ export default function Machin({
                   {standardTimes.length === 0 && <tr><td colSpan={3} className="py-4 text-center text-slate-400 italic text-xs">Aucun standard défini.</td></tr>}
                 </tbody>
               </table>
+            </div>
+
+            {/* MOBILE VIEW FOR STANDARD TIMES */}
+            <div className="grid grid-cols-1 gap-2 sm:hidden p-4">
+              {standardTimes.map(item => (
+                <div key={item.id} className="bg-slate-50/50 rounded-xl border border-slate-100 p-3 flex items-center justify-between">
+                  <div className="min-w-0 pr-3">
+                    <p className="font-semibold text-slate-700 text-sm truncate">{item.label}</p>
+                    <span className="inline-block mt-1 px-2 py-0.5 bg-amber-50 text-amber-700 rounded text-[10px] font-bold">{item.value} {item.unit}</span>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => openTimeModal(item)} className="p-2 text-slate-400 hover:text-amber-600 bg-white rounded-lg border border-slate-200"><Edit2 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setDeleteData({type: 'time', id: item.id})} className="p-2 text-slate-400 hover:text-rose-600 bg-white rounded-lg border border-slate-200"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                </div>
+              ))}
+              {standardTimes.length === 0 && <p className="text-center text-slate-400 italic text-xs py-2">Aucun standard défini.</p>}
             </div>
           </div>
 
@@ -695,6 +791,15 @@ export default function Machin({
                         if (machineErrors.name) setMachineErrors(prev => ({ ...prev, name: false }));
                       }}
                       className={`w-full rounded-xl px-3 py-2.5 text-slate-700 outline-none transition-all ${machineErrors.name ? 'bg-rose-50 border border-rose-300 focus:border-rose-500' : 'bg-slate-50 border border-slate-200 focus:border-emerald-500'}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-1.5">Type (Famille)</label>
+                    <input
+                      type="text"
+                      value={machineForm.machineCategory || ''}
+                      onChange={e => setMachineForm({...machineForm, machineCategory: e.target.value})}
+                      className="w-full rounded-xl px-3 py-2.5 text-slate-700 outline-none transition-all bg-slate-50 border border-slate-200 focus:border-emerald-500"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">

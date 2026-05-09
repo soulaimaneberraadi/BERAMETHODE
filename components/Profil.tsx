@@ -133,9 +133,15 @@ export default function Profil() {
               </div>
 
               <div className={`flex flex-wrap gap-4 text-sm font-medium text-slate-600 ${isRTL ? 'flex-row-reverse justify-end' : ''}`}>
-                <a href={`mailto:${user?.email || 'soulaimaneberraadi@gmail.com'}`} className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 hover:bg-indigo-50 rounded-lg border border-slate-200 hover:border-indigo-200 hover:text-indigo-600 transition-all">
-                  <Mail className="w-4 h-4" /> {user?.email || 'soulaimaneberraadi@gmail.com'}
-                </a>
+                {user?.email ? (
+                  <a href={`mailto:${user.email}`} className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 hover:bg-indigo-50 rounded-lg border border-slate-200 hover:border-indigo-200 hover:text-indigo-600 transition-all">
+                    <Mail className="w-4 h-4" /> {user.email}
+                  </a>
+                ) : (
+                  <span className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-lg border border-slate-200 text-slate-500">
+                    <Mail className="w-4 h-4" /> E-mail non disponible
+                  </span>
+                )}
                 {/* Only show phone for default profile or if user adds it later */}
                 {!user && (
                   <a href="tel:+212608793188" className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 hover:bg-emerald-50 rounded-lg border border-slate-200 hover:border-emerald-200 hover:text-emerald-600 transition-all">

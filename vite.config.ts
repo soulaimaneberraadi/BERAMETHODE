@@ -1,17 +1,37 @@
 import path from 'path';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import obfuscator from 'vite-plugin-javascript-obfuscator';
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '.', '');
-  return {
+export default defineConfig(() => ({
+    // « npx vite » / « vite preview » : le port est ≠ 8000 pour laisser **npm run dev** (Express + API) sur 8000.
+    // Le proxy envoie /api vers le backend — sans ça, /api renvoie index.html → erreur « HTML au lieu de JSON ».
     server: {
-      port: 8000,
+      port: 5173,
+      strictPort: false,
       host: '0.0.0.0',
+      proxy: {
+        '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      },
       watch: {
-        ignored: ['**/database.sqlite*', '**/.git/**', '**/node_modules/**']
+        // Évite rebuild/HMR en boucle si la DB ou des fichiers temporaires changent souvent
+        ignored: [
+          '**/database.sqlite*',
+          '**/*.sqlite',
+          '**/*.sqlite-shm',
+          '**/*.sqlite-wal',
+          '**/.git/**',
+          '**/node_modules/**',
+        ],
       }
+    },
+    preview: {
+      port: 4173,
+      strictPort: false,
+      host: '0.0.0.0',
+      proxy: {
+        '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      },
     },
     plugins: [
       react(),
@@ -33,14 +53,20 @@ export default defineConfig(({ mode }) => {
         }
       })
     ],
-    define: {
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'framer-motion',
+        'lucide-react',
+        'recharts',
+        'xlsx',
+        'react-qr-code'
+      ]
     },
     resolve: {
       alias: {
         '@': path.resolve('.'),
       }
     }
-  };
-});
+}));

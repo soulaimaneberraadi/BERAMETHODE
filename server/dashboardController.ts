@@ -1,10 +1,11 @@
 import { Request, Response } from 'express';
 import db from './db';
 
-const getOwnerId = (req: Request): number => (req as any).user?.id ?? 1;
-
 export const getDashboardKPIs = (req: Request, res: Response) => {
-    const ownerId = getOwnerId(req);
+    const ownerId = (req as any).user?.id as number | undefined;
+    if (ownerId == null) {
+        return res.status(401).json({ message: 'Authentication required' });
+    }
     const today = new Date().toISOString().slice(0, 10);
     const thisMonth = new Date().toISOString().slice(0, 7);
     const last7 = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
@@ -111,6 +112,31 @@ export const getDashboardKPIs = (req: Request, res: Response) => {
             GROUP BY e.chaineId ORDER BY total DESC LIMIT 8
         `).all(ownerId, last7);
 
+        // ── Calendrier de Production (Mois en cours) ────────
+        const firstOfMonth = new Date().toISOString().slice(0, 8) + '01';
+        const prodDaysMonth = db.prepare(`
+            SELECT DISTINCT date FROM suivi_data WHERE owner_id = ? AND date >= ?
+        `).all(ownerId, firstOfMonth) as { date: string }[];
+        const calendarProdDays = prodDaysMonth.map(d => parseInt(d.date.slice(8, 10), 10));
+
+        // ── Sparklines: Tendance présence 7j ─────────────────
+        const sparkPresence = db.prepare(`
+            SELECT p.date, SUM(CASE WHEN p.statut = 'PRESENT' OR p.statut = 'RETARD' THEN 1 ELSE 0 END) as value
+            FROM hr_pointage p
+            JOIN hr_workers w ON p.worker_id = w.id
+            WHERE w.owner_id = ? AND p.date >= ?
+            GROUP BY p.date ORDER BY p.date ASC
+        `).all(ownerId, last7);
+
+        // ── Sparklines: Tendance OFs 7j ──────────────────────
+        // On simule par les dates de création des events car on n'a pas d'historique d'états
+        const sparkOFs = db.prepare(`
+            SELECT SUBSTR(dateLancement, 1, 10) as date, COUNT(*) as value
+            FROM planning_events
+            WHERE owner_id = ? AND dateLancement >= ?
+            GROUP BY date ORDER BY date ASC
+        `).all(ownerId, last7);
+
         res.json({
             planning: {
                 total: planning?.total || 0,
@@ -146,6 +172,9 @@ export const getDashboardKPIs = (req: Request, res: Response) => {
                 prod_7j: prod7j,
                 mouvements_7j: mouvements7j,
                 prod_par_chaine: prodParChaine,
+                spark_presence: sparkPresence,
+                spark_ofs: sparkOFs,
+                calendar_prod_days: calendarProdDays,
             },
         });
     } catch (e) {

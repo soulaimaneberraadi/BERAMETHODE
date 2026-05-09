@@ -1,10 +1,14 @@
 import { Request, Response } from 'express';
 import db from './db';
 
-// Get all settings or specific groups
+// Get all settings or specific groups (scoped to authenticated owner)
 export const getSettings = (req: Request, res: Response) => {
     try {
-        const settings = db.prepare('SELECT key, value FROM app_settings').all();
+        const ownerId = (req as any).user?.id;
+        if (ownerId == null) {
+            return res.status(401).json({ message: 'Authentication required' });
+        }
+        const settings = db.prepare('SELECT key, value FROM app_settings WHERE owner_id = ?').all(ownerId);
         const config: Record<string, any> = {};
         
         for (const row of settings as any[]) {
@@ -25,19 +29,22 @@ export const getSettings = (req: Request, res: Response) => {
 // Save multiple settings at once
 export const saveSettings = (req: Request, res: Response) => {
     const payload = req.body; // Expects { key: value, ... }
-    const owner_id = (req as any).user?.id || 1;
+    const owner_id = (req as any).user?.id;
+    if (owner_id == null) {
+        return res.status(401).json({ message: 'Authentication required' });
+    }
 
     try {
         const transaction = db.transaction(() => {
             const stmt = db.prepare(`
-                INSERT INTO app_settings (key, value, owner_id) 
+                INSERT INTO app_settings (owner_id, key, value) 
                 VALUES (?, ?, ?) 
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                ON CONFLICT(owner_id, key) DO UPDATE SET value = excluded.value
             `);
             
             for (const [key, value] of Object.entries(payload)) {
                 const valStr = typeof value === 'object' ? JSON.stringify(value) : String(value);
-                stmt.run(key, valStr, owner_id);
+                stmt.run(owner_id, key, valStr);
             }
         });
 

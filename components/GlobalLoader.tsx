@@ -6,6 +6,9 @@ interface GlobalLoaderProps {
     text?: string;
     subText?: string;
     isFullScreen?: boolean;
+    error?: string | null;
+    onRetry?: () => void;
+    onContinueOffline?: () => void;
 }
 
 export default function GlobalLoader({
@@ -13,7 +16,10 @@ export default function GlobalLoader({
     progress,
     text = "Initialisation",
     subText = "Préparation du système",
-    isFullScreen = true
+    isFullScreen = true,
+    error = null,
+    onRetry,
+    onContinueOffline,
 }: GlobalLoaderProps) {
     const [displayedProgress, setDisplayedProgress] = useState(0);
 
@@ -24,7 +30,8 @@ export default function GlobalLoader({
             return;
         }
 
-        const targetProgress = Math.min(100, Math.max(0, progress));
+        // Clamp strictly — never allow negatives or values above 100
+        const targetProgress = Math.min(100, Math.max(0, isFinite(progress) ? progress : 0));
         // Snap to 100% when the boot sequence says so — otherwise ease animation often stops at 99%
         // because the loader closes before the 320ms tween finishes.
         if (targetProgress === 100) {
@@ -48,7 +55,7 @@ export default function GlobalLoader({
             const progressRatio = Math.min(elapsed / duration, 1);
             const easedRatio = easeOutExpo(progressRatio);
             
-            const currentVal = startProgress + (targetProgress - startProgress) * easedRatio;
+            const currentVal = Math.max(0, startProgress + (targetProgress - startProgress) * easedRatio);
             setDisplayedProgress(currentVal);
 
             if (progressRatio < 1) {
@@ -106,45 +113,72 @@ export default function GlobalLoader({
                     <h2 className="text-2xl font-semibold text-white tracking-wide">
                         {text}
                     </h2>
-                    
+
                     {/* Dynamic Status Pill */}
-                    <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-slate-800/60 border border-slate-700/50 backdrop-blur-xl shadow-inner">
-                        {/* Custom Animated Dots */}
+                    <div className={`inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full backdrop-blur-xl shadow-inner border ${error ? 'bg-rose-950/60 border-rose-700/50' : 'bg-slate-800/60 border-slate-700/50'}`}>
                         <div className="relative flex w-2.5 h-2.5">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                            <span className={`${error ? '' : 'animate-ping'} absolute inline-flex h-full w-full rounded-full ${error ? 'bg-rose-400' : 'bg-emerald-400'} opacity-75`}></span>
+                            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${error ? 'bg-rose-500' : 'bg-emerald-500'}`}></span>
                         </div>
-                        <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-300">
-                            {subText}
+                        <span className={`text-xs font-semibold uppercase tracking-[0.2em] ${error ? 'text-rose-200' : 'text-slate-300'}`}>
+                            {error ? 'Erreur de connexion' : subText}
                         </span>
                     </div>
                 </div>
 
-                {/* Linear Progress Integration */}
-                <div className="w-full mt-4">
-                    <div className="flex justify-between items-end mb-3 px-1">
-                        <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest opacity-80">
-                            Progression Globale
-                        </span>
-                        <div className="flex items-baseline gap-1">
-                            <span className="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-indigo-400 bg-clip-text text-transparent tabular-nums">
-                                {formattedProgress}
+                {error ? (
+                    /* Error block — replaces progress bar */
+                    <div className="w-full mt-2 flex flex-col items-center gap-4 animate-in fade-in duration-500">
+                        <p className="text-sm text-slate-400 text-center max-w-sm leading-relaxed">
+                            {error}
+                        </p>
+                        <div className="flex flex-wrap items-center justify-center gap-3 w-full">
+                            {onRetry && (
+                                <button
+                                    type="button"
+                                    onClick={onRetry}
+                                    className="px-5 py-2 rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500 text-white text-xs font-semibold uppercase tracking-[0.2em] shadow-lg shadow-emerald-500/20 hover:shadow-emerald-500/40 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                                >
+                                    Réessayer
+                                </button>
+                            )}
+                            {onContinueOffline && (
+                                <button
+                                    type="button"
+                                    onClick={onContinueOffline}
+                                    className="px-5 py-2 rounded-full bg-slate-800/80 text-slate-300 text-xs font-semibold uppercase tracking-[0.2em] border border-slate-700/50 hover:bg-slate-700/80 hover:text-white transition-all"
+                                >
+                                    Continuer hors-ligne
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                ) : (
+                    /* Linear Progress Integration */
+                    <div className="w-full mt-4">
+                        <div className="flex justify-between items-end mb-3 px-1">
+                            <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest opacity-80">
+                                Progression Globale
                             </span>
-                            <span className="text-slate-500 font-bold text-sm">%</span>
+                            <div className="flex items-baseline gap-1">
+                                <span className="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-indigo-400 bg-clip-text text-transparent tabular-nums">
+                                    {formattedProgress}
+                                </span>
+                                <span className="text-slate-500 font-bold text-sm">%</span>
+                            </div>
                         </div>
-                    </div>
 
-                    {/* Highly polished progress bar */}
-                    <div className="h-1.5 w-full bg-slate-800/80 rounded-full overflow-hidden border border-white/5 relative">
-                        <div 
-                            className="absolute top-0 left-0 h-full bg-gradient-to-r from-indigo-500 via-emerald-400 to-emerald-300 rounded-full transition-all duration-[400ms] ease-out shadow-[0_0_20px_rgba(52,211,153,0.6)]"
-                            style={{ width: `${formattedProgress}%` }}
-                        >
-                            {/* Inner shine */}
-                            <div className="absolute top-0 right-0 w-8 h-full bg-gradient-to-r from-transparent to-white/80 blur-[2px]" />
+                        {/* Highly polished progress bar */}
+                        <div className="h-1.5 w-full bg-slate-800/80 rounded-full overflow-hidden border border-white/5 relative">
+                            <div
+                                className="absolute top-0 left-0 h-full bg-gradient-to-r from-indigo-500 via-emerald-400 to-emerald-300 rounded-full transition-all duration-[400ms] ease-out shadow-[0_0_20px_rgba(52,211,153,0.6)]"
+                                style={{ width: `${formattedProgress}%` }}
+                            >
+                                <div className="absolute top-0 right-0 w-8 h-full bg-gradient-to-r from-transparent to-white/80 blur-[2px]" />
+                            </div>
                         </div>
                     </div>
-                </div>
+                )}
 
             </div>
             

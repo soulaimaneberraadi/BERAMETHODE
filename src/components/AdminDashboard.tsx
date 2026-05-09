@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Trash2, Shield, User, Search, AlertCircle } from 'lucide-react';
+import { Trash2, Shield, User, Search, AlertCircle, Download, GitMerge, Database } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 interface UserData {
@@ -17,10 +17,53 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [error, setError] = useState('');
-  
+
   // New User State
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'user' });
+
+  // Data Tools state
+  const [mergeTarget, setMergeTarget] = useState('');
+  const [mergeLoading, setMergeLoading] = useState(false);
+  const [mergeResult, setMergeResult] = useState<string | null>(null);
+
+  const handleExportAllData = async () => {
+    try {
+      const res = await fetch('/api/admin/export-all-data', { credentials: 'include' });
+      if (!res.ok) throw new Error('Export failed');
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `beramethode-export-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert('Export error: ' + err.message);
+    }
+  };
+
+  const handleMergeToUser = async () => {
+    if (!mergeTarget) return alert('Entrez un email cible');
+    if (!confirm(`Fusionner TOUTES les données vers ${mergeTarget} ? Cette action est irréversible.`)) return;
+    setMergeLoading(true);
+    setMergeResult(null);
+    try {
+      const res = await fetch('/api/admin/merge-to-user', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetEmail: mergeTarget }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message);
+      setMergeResult(`✅ ${data.message} — Modèles: ${data.modelsUpdated}, Produits: ${data.productsUpdated}, Ouvriers: ${data.workersUpdated}, Paramètres copiés: ${data.settingsCopied}`);
+    } catch (err: any) {
+      setMergeResult('❌ Erreur: ' + err.message);
+    } finally {
+      setMergeLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchUsers();
@@ -273,6 +316,69 @@ export default function AdminDashboard() {
             </div>
           )}
         </div>
+
+        {/* DATA TOOLS SECTION */}
+        <div className="mt-10">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-9 h-9 bg-indigo-100 rounded-xl flex items-center justify-center">
+              <Database className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">Outils de Données</h2>
+              <p className="text-xs text-slate-500">Exporter, fusionner ou migrer les données entre comptes</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Export all data */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <Download className="w-4 h-4 text-emerald-600" />
+                <h3 className="font-bold text-slate-800">Exporter toutes les données</h3>
+              </div>
+              <p className="text-xs text-slate-500 mb-4">Télécharger un fichier JSON complet avec tous les utilisateurs, modèles, produits magasin, et paramètres.</p>
+              <button
+                onClick={handleExportAllData}
+                className="w-full py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-xl hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                Télécharger Export JSON
+              </button>
+            </div>
+
+            {/* Merge to user */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <GitMerge className="w-4 h-4 text-indigo-600" />
+                <h3 className="font-bold text-slate-800">Fusionner vers un compte</h3>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">Consolider toutes les données de tous les utilisateurs dans un seul compte email.</p>
+              <div className="space-y-3">
+                <input
+                  type="email"
+                  value={mergeTarget}
+                  onChange={e => setMergeTarget(e.target.value)}
+                  placeholder="email cible"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none"
+                />
+                <button
+                  onClick={handleMergeToUser}
+                  disabled={mergeLoading}
+                  className="w-full py-2.5 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                >
+                  <GitMerge className="w-4 h-4" />
+                  {mergeLoading ? 'Fusion en cours...' : 'Fusionner'}
+                </button>
+                {mergeResult && (
+                  <div className={`text-xs font-medium p-3 rounded-lg ${mergeResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                    {mergeResult}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   );

@@ -5,7 +5,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='0 0 512 512' fill='black' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M110 420 L230 80 H150 L30 420 H110 Z' /%3E%3Cpath d='M260 80 H380 C430 80 470 110 470 170 C470 210 440 240 400 250 C450 260 480 300 480 350 C480 410 430 440 370 440 H200 L245 320 H360 C390 320 400 310 400 290 C400 270 380 260 350 260 H300 L320 200 H 370 C400 200 410 190 410 170 C410 150 390 140 360 140 H280 L260 80 Z' /%3E%3C/svg%3E" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MBERATEX - Cost Calculator</title>
+    <title>BERAMETHODE</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
@@ -13,15 +13,96 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
     <style>
-      /* Hide scrollbars globally but keep functionality */
+      /* Premium subtle scrollbars */
       ::-webkit-scrollbar {
-        display: none;
-        width: 0;
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
         background: transparent;
       }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.1);
+        border-radius: 10px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(0, 0, 0, 0.2);
+      }
       * {
-        -ms-overflow-style: none; /* IE and Edge */
-        scrollbar-width: none; /* Firefox */
+        scrollbar-width: thin;
+        scrollbar-color: rgba(0, 0, 0, 0.1) transparent;
+      }
+
+      /* Premium UI Animations */
+      @keyframes pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.85); }
+      }
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes shimmer {
+        0%   { background-position: -200% 0; }
+        100% { background-position:  200% 0; }
+      }
+
+      /* Pointage table row hover */
+      .ptg-row:hover {
+        background: #f8fafc !important;
+      }
+      .ptg-row:hover td:first-child {
+        background: #f8fafc !important;
+      }
+
+      /* Smooth tranche button transitions */
+      .tranche-btn {
+        transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+      }
+      .tranche-btn:hover:not(:disabled) {
+        transform: scale(1.1);
+      }
+      .tranche-btn:active:not(:disabled) {
+        transform: scale(0.95);
+      }
+
+      /* KPI card gradient shimmer on hover */
+      .kpi-card:hover {
+        filter: brightness(1.03);
+        transition: filter 0.2s ease;
+      }
+
+      /* Pointage — mobile : pas de largeur forcée, grille 2×2 sous ~560px */
+      .pointage-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 4px;
+        width: 100%;
+        min-width: 0;
+      }
+      @media (max-width: 560px) {
+        .pointage-kpi-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      .gestion-rh-tabs-scroll {
+        display: flex;
+        gap: 4px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        padding-bottom: 2px;
+        margin-bottom: -2px;
+      }
+      .gestion-rh-tabs-scroll button {
+        flex-shrink: 0;
+      }
+
+      @media (max-width: 560px) {
+        .gestion-rh-head-compact {
+          padding: 10px 12px !important;
+        }
       }
     </style>
   </head>

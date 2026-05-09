@@ -1,5 +1,7 @@
 import 'dotenv/config';
+import { shouldUseHelmet } from './server/jwtConfig';
 import express from 'express';
+import http from 'http';
 import os from 'os';
 import path from 'path';
 import cookieParser from 'cookie-parser';
@@ -37,29 +39,49 @@ import { getWorkers, saveWorker, deleteWorker, bulkImportWorkers } from './serve
 import { getWorkerSkills, saveWorkerSkill, deleteWorkerSkill, updateSkillFromSuivi } from './server/workerSkillsController';
 import { getPointage, savePointage, bulkSavePointage, deletePointage, getWorkerActivity } from './server/workerPointageController';
 import {
-  getHRWorkers, getHRWorkerById, saveHRWorker, deleteHRWorker,
+  getHRWorkers, getHRWorkerDossier, getHRWorkerById, saveHRWorker, deleteHRWorker,
   getHRPointage, saveHRPointage, validateHRPointage,
   getHRProduction, saveHRProduction,
   getHRAvances, saveHRAvance, updateHRAvanceStatut,
   getWorkerByCin, getWorkerPointageToday, getWorkerProductionToday,
+  getHRClaimPreview, postHRClaimFromGuest,
+  postHRWorkerPin,
+  postWorkerPinVerify,
 } from './server/hrController';
+import {
+  getHRInvitations,
+  postHRInvitation,
+  postHRInvitationRespond,
+  getHRInvitationByToken,
+} from './server/hrIdentityController';
 import { getSageExports, generateSageExport, previewSageExport } from './server/hrSageController';
+import { 
+  getFactures, getFactureById, saveFacture, deleteFacture,
+  getBonsLivraison, saveBonLivraison, deleteBonLivraison,
+  getPaiementsParFacture, savePaiement, deletePaiement
+} from './server/facturationController';
 import { getDashboardKPIs } from './server/dashboardController';
 import { authenticateToken } from './server/middleware';
+import { postAnalyzeTextile, postSuggestVocabulary, postGenerateOperations } from './server/geminiController';
 
 async function startServer() {
   const app = express();
   const PORT = 8000;
 
-  if (process.env.NODE_ENV === 'production') {
+  if (shouldUseHelmet()) {
     app.use(helmet());
   }
 
+  const isProd = process.env.NODE_ENV === 'production';
+
+  // En dev : pas de plafond global (HMR, proxy Vite, React StrictMode, rafraîchissements → faux positifs 429).
+  // En prod : plafond large pour une appli riche (plusieurs modules + boot) sans ouvrir l’abus.
   const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 500,
+    limit: 8000,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: () => true, // DISABLED FOR TESTING
     handler: (_req, res) => {
       res.status(429).json({ message: 'Trop de requêtes. Réessayez dans 15 minutes.' });
     },
@@ -67,12 +89,52 @@ async function startServer() {
 
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 50,  // 50 tentatives par 15 min (suffisant pour les tests)
+    limit: 50,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: () => true, // DISABLED FOR TESTING
     handler: (_req, res) => {
       res.status(429).json({ message: 'Trop de tentatives de connexion. Attendez 15 minutes.' });
     },
+  });
+
+  const passwordResetByEmailLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 12,
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+    skip: () => true, // DISABLED FOR TESTING
+    keyGenerator: (req) => {
+      const email = typeof (req.body as { email?: string })?.email === 'string'
+        ? (req.body as { email: string }).email.trim().toLowerCase()
+        : '';
+      return `${req.ip ?? 'unknown'}:${email}`;
+    },
+    handler: (_req, res) => {
+      res.status(429).json({ message: 'Trop de demandes pour ce compte. Réessayez plus tard.' });
+    },
+  });
+
+  const beraouvierPublicLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+    skip: () => true, // DISABLED FOR TESTING
+    keyGenerator: (req) => `${req.ip ?? 'unknown'}:${(req.params as { cin?: string }).cin ?? ''}`,
+    handler: (_req, res) => {
+      res.status(429).json({ message: 'Trop de requêtes. Réessayez plus tard.' });
+    },
+  });
+
+  const networkInfoLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: () => true, // DISABLED FOR TESTING
   });
 
   app.use(express.json({ limit: '50mb' }));
@@ -85,8 +147,8 @@ async function startServer() {
   app.post('/api/auth/logout', logout);
   app.get('/api/auth/me', me);
 
-  app.post('/api/auth/forgot-password', requestPasswordReset);
-  app.post('/api/auth/verify-code', verifyResetCode);
+  app.post('/api/auth/forgot-password', passwordResetByEmailLimiter, requestPasswordReset);
+  app.post('/api/auth/verify-code', passwordResetByEmailLimiter, verifyResetCode);
   app.post('/api/auth/reset-password', resetPassword);
 
   app.get('/api/models', authenticateToken, getModels);
@@ -117,9 +179,9 @@ async function startServer() {
   app.get('/api/settings', authenticateToken, getSettings);
   app.post('/api/settings', authenticateToken, saveSettings);
 
-  app.get('/api/users', isAdmin, getAllUsers);
-  app.put('/api/users/:id/role', isAdmin, updateUserRole);
-  app.delete('/api/users/:id', isAdmin, deleteUser);
+  app.get('/api/users', authenticateToken, isAdmin, getAllUsers);
+  app.put('/api/users/:id/role', authenticateToken, isAdmin, updateUserRole);
+  app.delete('/api/users/:id', authenticateToken, isAdmin, deleteUser);
 
   app.get('/api/planning', authenticateToken, getPlanningEvents);
   app.post('/api/planning', authenticateToken, savePlanningEvents);
@@ -156,8 +218,12 @@ async function startServer() {
 
   // Phase 5 — HR Full Module
   app.get('/api/hr/workers', authenticateToken, getHRWorkers);
+  app.get('/api/hr/claim-legacy-preview', authenticateToken, getHRClaimPreview);
+  app.post('/api/hr/claim-legacy', authenticateToken, postHRClaimFromGuest);
+  app.get('/api/hr/workers/:id/dossier', authenticateToken, getHRWorkerDossier);
   app.get('/api/hr/workers/:id', authenticateToken, getHRWorkerById);
   app.post('/api/hr/workers', authenticateToken, saveHRWorker);
+  app.post('/api/hr/workers/:id/pin', authenticateToken, postHRWorkerPin);
   app.delete('/api/hr/workers/:id', authenticateToken, deleteHRWorker);
 
   app.get('/api/hr/pointage', authenticateToken, getHRPointage);
@@ -175,16 +241,110 @@ async function startServer() {
   app.get('/api/hr/sage-preview/:mois', authenticateToken, previewSageExport);
   app.get('/api/hr/sage-export/:mois', authenticateToken, generateSageExport);
 
+  // Section 23 — Identité plateforme + invitations
+  app.get('/api/hr/invitations', authenticateToken, getHRInvitations);
+  app.post('/api/hr/invitations', authenticateToken, postHRInvitation);
+  app.post('/api/hr/invitations/respond', beraouvierPublicLimiter, postHRInvitationRespond);
+  app.get('/api/hr/invitations/preview/:token', beraouvierPublicLimiter, getHRInvitationByToken);
+
   // Phase 6 — Dashboard KPIs
   app.get('/api/dashboard/kpis', authenticateToken, getDashboardKPIs);
 
-  // BERAOUVIER — Read-Only (no financial data)
-  app.get('/api/worker/:cin', getWorkerByCin);
-  app.get('/api/worker/:cin/pointage', getWorkerPointageToday);
-  app.get('/api/worker/:cin/production', getWorkerProductionToday);
+  // Phase: Facturation (Achat, Vente, Devis, BL)
+  app.get('/api/facturation/factures', authenticateToken, getFactures);
+  app.get('/api/facturation/factures/:id', authenticateToken, getFactureById);
+  app.post('/api/facturation/factures', authenticateToken, saveFacture);
+  app.delete('/api/facturation/factures/:id', authenticateToken, deleteFacture);
+
+  app.get('/api/facturation/bl', authenticateToken, getBonsLivraison);
+  app.post('/api/facturation/bl', authenticateToken, saveBonLivraison);
+  app.delete('/api/facturation/bl/:id', authenticateToken, deleteBonLivraison);
+
+  app.get('/api/facturation/paiements/:facture_id', authenticateToken, getPaiementsParFacture);
+  app.post('/api/facturation/paiements', authenticateToken, savePaiement);
+  app.delete('/api/facturation/paiements/:facture_id/:id', authenticateToken, deletePaiement);
+
+  // Gemini / IA — API key server-side only
+  app.post('/api/ai/analyze-textile', authenticateToken, postAnalyzeTextile);
+  app.post('/api/ai/suggest-vocabulary', authenticateToken, postSuggestVocabulary);
+  app.post('/api/ai/generate-operations', authenticateToken, postGenerateOperations);
+
+  // BERAOUVIER — Read-Only (no financial data); rate-limited, minimal fields
+  app.get('/api/worker/:cin', beraouvierPublicLimiter, getWorkerByCin);
+  app.post('/api/worker/:cin/pin-verify', beraouvierPublicLimiter, postWorkerPinVerify);
+  app.get('/api/worker/:cin/pointage', beraouvierPublicLimiter, getWorkerPointageToday);
+  app.get('/api/worker/:cin/production', beraouvierPublicLimiter, getWorkerProductionToday);
 
   // BERAOUVIER standalone app
   app.get('/beraouvier', (_req, res) => res.sendFile('public/beraouvier.html', { root: process.cwd() }));
+
+  // Admin: Export ALL data from ALL users as JSON (for migration / consolidation)
+  app.get('/api/admin/export-all-data', authenticateToken, isAdmin, (_req, res) => {
+    try {
+      const db = require('./server/db').default;
+      const users = db.prepare('SELECT id, email, name, role, created_at FROM users').all();
+      const models = db.prepare('SELECT * FROM models').all();
+      const planning = db.prepare("SELECT * FROM app_settings WHERE key = 'planning_events'").all();
+      const suivis = db.prepare("SELECT * FROM app_settings WHERE key LIKE 'suivi%'").all();
+      const settings = db.prepare('SELECT * FROM app_settings').all();
+      const workers = db.prepare('SELECT * FROM hr_workers').all();
+      const magasinProducts = db.prepare('SELECT * FROM magasin_products').all();
+      const timestamp = new Date().toISOString();
+      res.json({
+        exportDate: timestamp,
+        users,
+        models: models.map((m: any) => ({ ...m, data: (() => { try { return JSON.parse(m.data); } catch { return m.data; } })() })),
+        planning,
+        suivis,
+        settings,
+        workers,
+        magasinProducts,
+      });
+    } catch (err) {
+      console.error('Export all data error:', err);
+      res.status(500).json({ message: 'Export failed' });
+    }
+  });
+
+  // Admin: Merge all users data into target email account
+  app.post('/api/admin/merge-to-user', authenticateToken, isAdmin, (req, res) => {
+    try {
+      const { targetEmail } = req.body as { targetEmail: string };
+      if (!targetEmail) return res.status(400).json({ message: 'targetEmail required' });
+      const db = require('./server/db').default;
+      const targetUser = db.prepare('SELECT id FROM users WHERE email = ?').get(targetEmail);
+      if (!targetUser) return res.status(404).json({ message: `User with email ${targetEmail} not found` });
+      const targetId = (targetUser as any).id;
+      // Merge models from all other users
+      const modelsUpdated = db.prepare('UPDATE models SET user_id = ? WHERE user_id != ?').run(targetId, targetId);
+      // Merge magasin products
+      const productsUpdated = db.prepare('UPDATE magasin_products SET owner_id = ? WHERE owner_id != ?').run(targetId, targetId);
+      // Merge HR workers
+      const workersUpdated = db.prepare('UPDATE hr_workers SET owner_id = ? WHERE owner_id != ?').run(targetId, targetId);
+      // Merge app settings (planning, suivis, etc.) — keep target's keys, add missing
+      const otherSettings = db.prepare('SELECT owner_id, key, value FROM app_settings WHERE owner_id != ?').all(targetId);
+      const targetKeys = new Set(
+        (db.prepare('SELECT key FROM app_settings WHERE owner_id = ?').all(targetId) as any[]).map((r: any) => r.key)
+      );
+      const insertStmt = db.prepare('INSERT OR IGNORE INTO app_settings (owner_id, key, value) VALUES (?, ?, ?)');
+      for (const row of otherSettings as any[]) {
+        if (!targetKeys.has(row.key)) {
+          insertStmt.run(targetId, row.key, row.value);
+          targetKeys.add(row.key);
+        }
+      }
+      res.json({
+        message: `Merged all data into ${targetEmail}`,
+        modelsUpdated: modelsUpdated.changes,
+        productsUpdated: productsUpdated.changes,
+        workersUpdated: workersUpdated.changes,
+        settingsCopied: otherSettings.length,
+      });
+    } catch (err) {
+      console.error('Merge data error:', err);
+      res.status(500).json({ message: 'Merge failed' });
+    }
+  });
 
   // Admin: Download database backup
   app.get('/api/admin/download-db', authenticateToken, isAdmin, (_req, res) => {
@@ -199,7 +359,7 @@ async function startServer() {
   });
 
   // Network info endpoint (public, used by login page)
-  app.get('/api/network-info', (_req, res) => {
+  app.get('/api/network-info', networkInfoLimiter, (_req, res) => {
     const nets = os.networkInterfaces();
     const addresses: string[] = [];
     for (const iface of Object.values(nets)) {
@@ -213,9 +373,31 @@ async function startServer() {
     res.json({ addresses, port: PORT });
   });
 
+  // Toute requête /api non gérée ci-dessus : JSON 404 (évite que Vite ou express.static renvoient du HTML → erreur « Unexpected token '<' » côté client).
+  app.use('/api', (req, res) => {
+    res.status(404).json({
+      message: 'Endpoint API inconnu ou méthode HTTP non prise en charge. Vérifiez la version du serveur (redémarrage après mise à jour).',
+      method: req.method,
+      path: req.originalUrl,
+    });
+  });
+
+  // Un seul serveur HTTP : le WebSocket HMR de Vite se branche dessus (évite
+  // « WebSocket server error: Port is already in use » sur 24678 et rechargements instables).
+  const httpServer = http.createServer(app);
+
   if (process.env.NODE_ENV !== 'production') {
+    // BERAMETHODE_NO_HMR=1 : désactive le rechargement à chaud (diagnostic si la page
+    // « se relance » en boucle : HMR / WebSocket instable sur certains postes).
+    const hmrOff =
+      process.env.BERAMETHODE_NO_HMR === '1' ||
+      process.env.BERAMETHODE_NO_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      clearScreen: false,
+      server: {
+        middlewareMode: true,
+        hmr: hmrOff ? false : { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -223,7 +405,7 @@ async function startServer() {
     app.use(express.static('dist'));
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     const nets = os.networkInterfaces();
     console.log(`\n  🟢 BERAMETHODE Server running`);
     console.log(`  ├─ Local:   http://localhost:${PORT}`);
@@ -235,7 +417,8 @@ async function startServer() {
         }
       }
     }
-    console.log(`  └─ Mode:    ${process.env.NODE_ENV || 'development'}\n`);
+    console.log(`  └─ Mode:    ${process.env.NODE_ENV || 'development'}`);
+    console.log(`  └─ CWD:    ${process.cwd()} (database.sqlite doit être ici)\n`);
   });
 }
 

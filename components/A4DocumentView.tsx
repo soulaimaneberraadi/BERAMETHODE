@@ -77,7 +77,7 @@ const A4DocumentView = forwardRef<HTMLDivElement, A4DocumentViewProps>(({
                     <div className="flex-1 space-y-1 mt-1">
                         <input
                             type="text"
-                            placeholder="MBERATEX SARL"
+                            placeholder="BERAMETHODE SARL"
                             value={companyName}
                             onChange={(e) => setCompanyName(e.target.value)}
                             className={`font-black tracking-tight text-xl uppercase ${inputClasses} placeholder:text-slate-300`}

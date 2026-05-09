@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Lock, Mail, Github, Chrome, ArrowRight, User, Sun, Moon, Download, Wifi, Database } from 'lucide-react';
+import { hasLocalDraftMarker, markPendingDraftAttachToEmail, notifyServerSessionEstablished } from '../../lib/dataIdentity';
+import { Lock, Mail, ArrowRight, User, Sun, Moon } from 'lucide-react';
 import { motion, AnimatePresence, Variants } from 'framer-motion';
 
 export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onGuest?: () => void }) {
@@ -23,18 +24,16 @@ export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onG
 
   // Theme State: 'dark' or 'light'
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [networkAddresses, setNetworkAddresses] = useState<string[]>([]);
-  const [dbDownloading, setDbDownloading] = useState(false);
 
-  // Fetch network info on mount
+  // Auto-detect theme based on time
   useEffect(() => {
-    fetch('/api/network-info')
-      .then(r => r.json())
-      .then(data => setNetworkAddresses(data.addresses || []))
-      .catch(() => {});
+    const hour = new Date().getHours();
+    setTheme(hour >= 6 && hour < 18 ? 'light' : 'dark');
   }, []);
 
-  // ... (keep existing useEffect and toggleTheme)
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
 
   // Timer Effect
   useEffect(() => {
@@ -110,28 +109,57 @@ export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onG
 
   const passwordStrength = getPasswordStrength(newPassword);
 
+  const loginErrorMessage = (data: unknown, fallback: string): string => {
+    if (!data || typeof data !== 'object') return fallback;
+    const d = data as Record<string, unknown>;
+    const raw = d.message ?? d.error;
+    const s = typeof raw === 'string' ? raw.trim() : '';
+    if (!s) return fallback;
+    if (s === 'Invalid credentials') return 'E-mail ou mot de passe incorrect.';
+    return s;
+  };
+
+  const networkErrorMessage = (err: unknown): string => {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (
+      msg === 'Failed to fetch' ||
+      msg === 'Load failed' ||
+      msg.startsWith('NetworkError')
+    ) {
+      return (
+        'Impossible de joindre le serveur. Lancez « npm run dev » puis ouvrez http://localhost:8000. ' +
+        'Si vous utilisez uniquement « npm run dev:ui » (port 5173), le backend doit tourner sur le port 8000.'
+      );
+    }
+    return msg;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
     try {
+      if (hasLocalDraftMarker()) {
+        markPendingDraftAttachToEmail(email.trim());
+      }
       const res = await fetch('/api/auth/login', {
         credentials: 'include',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: email.trim(), password }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        throw new Error(data.message || 'Email ou mot de passe incorrect');
+        throw new Error(loginErrorMessage(data, 'E-mail ou mot de passe incorrect.'));
       }
 
+      notifyServerSessionEstablished(data.user?.id ?? 0);
       login(data.user);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(networkErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -152,8 +180,8 @@ export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onG
       setResetStep(2);
       setTimer(60);
       setCanResend(false);
-    } catch (err: any) {
-      setResetError(err.message);
+    } catch (err: unknown) {
+      setResetError(networkErrorMessage(err));
     } finally {
       setResetLoading(false);
     }
@@ -178,8 +206,8 @@ export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onG
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
       setResetStep(3);
-    } catch (err: any) {
-      setResetError(err.message);
+    } catch (err: unknown) {
+      setResetError(networkErrorMessage(err));
     } finally {
       setResetLoading(false);
     }
@@ -204,8 +232,8 @@ export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onG
       setOtp(['', '', '', '', '', '']);
       setNewPassword('');
       setError('Password reset successfully. Please login.');
-    } catch (err: any) {
-      setResetError(err.message);
+    } catch (err: unknown) {
+      setResetError(networkErrorMessage(err));
     } finally {
       setResetLoading(false);
     }
@@ -235,9 +263,50 @@ export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onG
   };
 
   return (
-    <div className={`min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden font-sans transition-colors duration-1000 ${isDark ? 'bg-slate-900' : 'bg-[#f0f4f8]'}`}>
-      
-      {/* ... (keep theme toggle and background) */}
+    <div className={`min-h-screen flex items-center justify-center py-6 px-4 sm:py-12 sm:px-6 lg:px-8 relative overflow-hidden font-sans transition-colors duration-1000 ${isDark ? 'bg-slate-900' : 'bg-[#f0f4f8]'}`}>
+
+      {/* Theme Toggle */}
+      <button
+        onClick={toggleTheme}
+        className={`absolute top-6 right-6 p-3 rounded-full backdrop-blur-md transition-all duration-500 z-50 ${isDark ? 'bg-white/10 text-yellow-400 hover:bg-white/20' : 'bg-slate-900/5 text-slate-600 hover:bg-slate-900/10'}`}
+      >
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={isDark ? 'sun' : 'moon'}
+            initial={{ rotate: -180, opacity: 0, scale: 0.5 }}
+            animate={{ rotate: 0, opacity: 1, scale: 1 }}
+            exit={{ rotate: 180, opacity: 0, scale: 0.5 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+          >
+            {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </motion.div>
+        </AnimatePresence>
+      </button>
+
+      {/* Dynamic Background Mesh */}
+      <div className="absolute inset-0 w-full h-full overflow-hidden z-0">
+        <div className={`absolute top-0 left-0 w-full h-full transition-opacity duration-1000 ${isDark ? 'bg-[#0f172a] opacity-90' : 'bg-[#ffffff] opacity-60'}`}></div>
+
+        <motion.div
+          animate={{
+            scale: [1, 1.2, 1],
+            rotate: [0, -45, 0],
+            opacity: isDark ? [0.3, 0.5, 0.3] : [0.6, 0.8, 0.6]
+          }}
+          transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+          className={`absolute -top-[20%] -right-[10%] w-[80%] h-[80%] rounded-full blur-[120px] transition-colors duration-1000 ${isDark ? 'bg-emerald-600/20' : 'bg-emerald-400/20'}`}
+        />
+        <motion.div
+          animate={{
+            scale: [1, 1.1, 1],
+            x: [0, 100, 0],
+            opacity: isDark ? [0.2, 0.4, 0.2] : [0.5, 0.7, 0.5]
+          }}
+          transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
+          className={`absolute bottom-[10%] -left-[10%] w-[60%] h-[60%] rounded-full blur-[120px] transition-colors duration-1000 ${isDark ? 'bg-indigo-600/20' : 'bg-teal-300/20'}`}
+        />
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-soft-light pointer-events-none"></div>
+      </div>
 
       <motion.div 
         variants={containerVariants}
@@ -631,46 +700,6 @@ export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onG
         </motion.div>
       </motion.div>
 
-      {/* Network Access Info */}
-      {networkAddresses.length > 0 && (
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.8 }}
-          className={`absolute bottom-20 left-1/2 -translate-x-1/2 z-10 px-5 py-3 rounded-2xl backdrop-blur-xl border ${
-            isDark 
-              ? 'bg-white/5 border-white/10' 
-              : 'bg-white/60 border-white/40 shadow-sm'
-          }`}
-        >
-          <div className="flex items-center gap-2 mb-1.5">
-            <Wifi className={`w-3.5 h-3.5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
-            <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>
-              Accès réseau local
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {networkAddresses.map((ip, i) => (
-              <button
-                key={i}
-                onClick={() => navigator.clipboard?.writeText(`http://${ip}:8000`)}
-                className={`text-xs font-mono px-2.5 py-1 rounded-lg cursor-pointer transition-all ${
-                  isDark 
-                    ? 'bg-slate-800/60 text-slate-300 hover:bg-emerald-500/20 hover:text-emerald-300' 
-                    : 'bg-slate-100 text-slate-600 hover:bg-emerald-50 hover:text-emerald-700'
-                }`}
-                title="Cliquer pour copier"
-              >
-                http://{ip}:8000
-              </button>
-            ))}
-          </div>
-          <p className={`text-[10px] mt-1.5 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
-            Ouvrez cette adresse depuis un autre appareil (téléphone, PC) sur le même WiFi
-          </p>
-        </motion.div>
-      )}
-      
       {/* Footer Copyright */}
       <div className="absolute bottom-6 text-center w-full z-10">
          <p className={`text-xs font-medium transition-colors duration-500 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>© {new Date().getFullYear()} BeraMethode — AJANIF TEX. Tous droits réservés.</p>

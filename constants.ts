@@ -4,7 +4,7 @@ export const fmt = (n: number) => parseFloat(n.toFixed(1)).toString();
 
 export const translations: Translations = {
   dr: { // Darija
-    appTitle: "MBERATEX",
+    appTitle: "BERAMETHODE",
     subTitle: "حساب سعر التكلفة (Prix de Revient)",
     modelInfo: "معلومات الموديل & التكلفة",
     modelName: "اسم الموديل",
@@ -76,7 +76,7 @@ export const translations: Translations = {
     loadingLib: "جاري تحميل النظام..."
   },
   fr: {
-    appTitle: "Calculateur de Coûts",
+    appTitle: "BERAMETHODE",
     subTitle: "Calcul de Prix de Revient Industriel",
     modelInfo: "Infos Modèle & Coûts",
     modelName: "Nom du Modèle",
@@ -148,7 +148,7 @@ export const translations: Translations = {
     loadingLib: "Chargement..."
   },
   en: {
-    appTitle: "Industrial Cost Calculator",
+    appTitle: "BERAMETHODE",
     subTitle: "Cost Price Calculation",
     modelInfo: "Model Info & Costs",
     modelName: "Model Name",
@@ -220,7 +220,7 @@ export const translations: Translations = {
     loadingLib: "Loading..."
   },
   es: {
-    appTitle: "Calculadora de Costos",
+    appTitle: "BERAMETHODE",
     subTitle: "Cálculo de Precio de Coste",
     modelInfo: "Info Modelo y Costos",
     modelName: "Nombre del Modelo",

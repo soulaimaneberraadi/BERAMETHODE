@@ -346,6 +346,7 @@ export default function ModelWorkflow({
                             onSectionSplitChange={handleSectionSplitChange}
                             lang={lang}
                             articleNameError={validationError?.includes(lang === 'ar' ? 'مرجع' : 'référence') || false}
+                            settings={settings}
                         />
                     )}
 

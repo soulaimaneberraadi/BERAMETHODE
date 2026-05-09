@@ -1,14 +1,15 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { randomInt } from 'crypto';
+import { JWT_SECRET, isCookieSecure } from './jwtConfig';
 import db from './db';
 import nodemailer from 'nodemailer';
-import { randomInt } from 'crypto';
 
-if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error("FATAL: JWT_SECRET environment variable is not defined in production.");
+/** Avoid login/register failures from autofill spaces or Gmail-style case differences. */
+function normalizeEmail(raw: string): string {
+  return String(raw ?? '').trim().toLowerCase();
 }
-const SECRET_KEY = process.env.JWT_SECRET || 'super-secret-key-change-this';
 
 // Configure Nodemailer Transporter
 const transporter = nodemailer.createTransport({
@@ -22,7 +23,8 @@ const transporter = nodemailer.createTransport({
 });
 
 export const register = async (req: Request, res: Response) => {
-  const { email, password, name } = req.body;
+  const { password, name } = req.body;
+  const email = normalizeEmail(req.body.email);
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required' });
@@ -33,11 +35,11 @@ export const register = async (req: Request, res: Response) => {
     const stmt = db.prepare('INSERT INTO users (email, password, name, role) VALUES (?, ?, ?, ?)');
     const info = stmt.run(email, hashedPassword, name || '', 'user');
 
-    const token = jwt.sign({ id: info.lastInsertRowid, email, role: 'user' }, SECRET_KEY, { expiresIn: '24h' });
+    const token = jwt.sign({ id: info.lastInsertRowid, email, role: 'user' }, JWT_SECRET, { expiresIn: '24h' });
 
     res.cookie('token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isCookieSecure(),
       sameSite: 'strict',
       maxAge: 24 * 60 * 60 * 1000 // 24 hours
     });
@@ -53,25 +55,26 @@ export const register = async (req: Request, res: Response) => {
 };
 
 export const login = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+  const email = normalizeEmail(req.body.email);
+  const { password } = req.body;
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required' });
   }
 
   try {
-    const stmt = db.prepare('SELECT * FROM users WHERE email = ?');
+    const stmt = db.prepare('SELECT * FROM users WHERE LOWER(TRIM(email)) = ?');
     const user = stmt.get(email) as any;
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ message: 'Invalid credentials' });
+      return res.status(401).json({ message: 'E-mail ou mot de passe incorrect.' });
     }
 
-    const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
+    const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
 
     res.cookie('token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isCookieSecure(),
       sameSite: 'strict',
       maxAge: 24 * 60 * 60 * 1000 // 24 hours
     });
@@ -84,7 +87,12 @@ export const login = async (req: Request, res: Response) => {
 };
 
 export const logout = (req: Request, res: Response) => {
-  res.clearCookie('token');
+  res.clearCookie('token', {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: isCookieSecure(),
+  });
   res.json({ message: 'Logged out successfully' });
 };
 
@@ -96,7 +104,7 @@ export const me = (req: Request, res: Response) => {
   }
 
   try {
-    const decoded = jwt.verify(token, SECRET_KEY) as any;
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
     const stmt = db.prepare('SELECT id, email, name, role FROM users WHERE id = ?');
     const user = stmt.get(decoded.id);
 
@@ -111,15 +119,14 @@ export const me = (req: Request, res: Response) => {
 };
 
 export const requestPasswordReset = (req: Request, res: Response) => {
-  const { email } = req.body;
+  const email = normalizeEmail(req.body.email);
 
   try {
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const user = db.prepare('SELECT * FROM users WHERE LOWER(TRIM(email)) = ?').get(email);
 
     if (!user) {
       return res.json({
         message: 'If the email exists, a verification code has been sent',
-        devCode: undefined
       });
     }
 
@@ -129,8 +136,11 @@ export const requestPasswordReset = (req: Request, res: Response) => {
 
     db.prepare('INSERT INTO verification_codes (email, code, expires_at) VALUES (?, ?, ?)').run(email, code, expiresAt);
 
-    // Log the code for debugging (in case email fails or for development)
-    console.log(`Verification code for ${email}: ${code}`);
+    const allowResetDev =
+      process.env.ALLOW_RESET_DEV_CODE === 'true' && process.env.NODE_ENV !== 'production';
+    if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_RESET_LOG_CODE === 'true') {
+      console.log(`Verification code for ${email}: ${code}`);
+    }
 
     // Send email using Nodemailer
     const mailOptions = {
@@ -170,9 +180,7 @@ export const requestPasswordReset = (req: Request, res: Response) => {
 
     res.json({
       message: 'If the email exists, a verification code has been sent',
-      // For development/preview purposes only, include the code in the response
-      // This allows testing without a working SMTP server
-      devCode: process.env.NODE_ENV !== 'production' ? code : undefined
+      ...(allowResetDev ? { devCode: code } : {}),
     });
   } catch (error) {
     console.error('Password reset request error:', error);
@@ -181,10 +189,11 @@ export const requestPasswordReset = (req: Request, res: Response) => {
 };
 
 export const verifyResetCode = (req: Request, res: Response) => {
-  const { email, code } = req.body;
+  const email = normalizeEmail(req.body.email);
+  const { code } = req.body;
 
   try {
-    const record = db.prepare('SELECT * FROM verification_codes WHERE email = ? AND code = ? AND expires_at > ?').get(email, code, Date.now());
+    const record = db.prepare('SELECT * FROM verification_codes WHERE LOWER(TRIM(email)) = ? AND code = ? AND expires_at > ?').get(email, code, Date.now());
 
     if (!record) {
       return res.status(400).json({ message: 'Invalid or expired code' });
@@ -198,10 +207,11 @@ export const verifyResetCode = (req: Request, res: Response) => {
 };
 
 export const resetPassword = async (req: Request, res: Response) => {
-  const { email, code, newPassword } = req.body;
+  const email = normalizeEmail(req.body.email);
+  const { code, newPassword } = req.body;
 
   try {
-    const record = db.prepare('SELECT * FROM verification_codes WHERE email = ? AND code = ? AND expires_at > ?').get(email, code, Date.now());
+    const record = db.prepare('SELECT * FROM verification_codes WHERE LOWER(TRIM(email)) = ? AND code = ? AND expires_at > ?').get(email, code, Date.now());
 
     if (!record) {
       return res.status(400).json({ message: 'Invalid or expired code' });
@@ -211,8 +221,8 @@ export const resetPassword = async (req: Request, res: Response) => {
 
     // Enforce Transaction for data integrity
     const transaction = db.transaction(() => {
-      db.prepare('UPDATE users SET password = ? WHERE email = ?').run(hashedPassword, email);
-      db.prepare('DELETE FROM verification_codes WHERE email = ?').run(email);
+      db.prepare('UPDATE users SET password = ? WHERE LOWER(TRIM(email)) = ?').run(hashedPassword, email);
+      db.prepare('DELETE FROM verification_codes WHERE LOWER(TRIM(email)) = ?').run(email);
     });
     transaction();
 

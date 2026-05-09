@@ -3,8 +3,8 @@
 > **Auteur**: Soulaimane Berraadi  
 > **AI Partner**: Antigravity (Claude Code — Sonnet 4.6)  
 > **Statut**: PLAN MAÎTRE — RÉFÉRENCE UNIQUE  
-> **Dernière mise à jour**: 2026-04-22  
-> **Sections**: 23 (0 → 22) | **Phases**: 12 | **Lignes**: ~1,950
+> **Dernière mise à jour**: 2026-04-26  
+> **Sections**: 24 (0 → 23) | **Phases**: 12 | **Lignes**: ~2,050
 
 ---
 
@@ -35,6 +35,7 @@
 | 20 | Current State (Live Tracking) | 🔄 Vivant |
 | 21 | V2 Roadmap Complet | ✅ Figé |
 | 22 | Décisions Mises en Coffre | ✅ Figé |
+| 23 | Identité salarié transverse (matricule, CIN, invitations, multi-apps) | 🔄 Spécification V2 |
 
 ---
 
@@ -1228,7 +1229,7 @@ PHASE  │ STATUT    │ PROGRESSION
   3    │ ✅ DONE   │ ████████████████████ 100%
   4    │ ✅ DONE   │ ████████████████████ 100%
   5    │ ✅ DONE   │ ████████████████████ 100%
-  6    │ 🔴 0%     │ ░░░░░░░░░░░░░░░░░░░░   0%
+  6    │ ✅ DONE   │ ████████████████████ 100%
   7    │ 🔴 0%     │ ░░░░░░░░░░░░░░░░░░░░   0%
   8    │ 🔴 0%     │ ░░░░░░░░░░░░░░░░░░░░   0%
   9    │ 🔴 0%     │ ░░░░░░░░░░░░░░░░░░░░   0%
@@ -1242,9 +1243,9 @@ PHASE  │ STATUT    │ PROGRESSION
 |---------|------|-------|
 | `server/db.ts` | ✅ Stable | 18 tables, migrations en place |
 | `server.ts` | ✅ Stable | 45+ routes enregistrées |
-| `components/Effectifs.tsx` | 🟡 Basic | Workers simple, sans hr_* tables |
-| `components/Dashboard.tsx` | 🟡 Partiel | KPIs partiellement réels |
-| `EFFECTIFS_MODULE_SPEC.md` | ✅ Approuvé | Spec complète prête à implémenter |
+| `components/Effectifs.tsx` | ✅ Done | Workers HR complet, pointage, paie, Sage |
+| `components/Dashboard.tsx` | ✅ Done | KPIs réels, Sparklines & Calendar intégrés |
+| `EFFECTIFS_MODULE_SPEC.md` | ✅ Implementé | Feature complete Phase 5 |
 
 ### Phase 4 — Tasks Restantes
 
@@ -1384,6 +1385,74 @@ PHASE  │ STATUT    │ PROGRESSION
 ### D12 — Article 385 appliqué automatiquement
 **Décision**: Le plafonnement des avances (1/10ème du salaire net) est calculé **automatiquement** côté serveur. L'admin ne peut pas dépasser ce plafond via l'UI.  
 **Pourquoi**: Conformité légale Maroc obligatoire. Responsabilité de l'app.
+
+---
+
+## SECTION 23 — IDENTITÉ SALARIÉ TRANSVERSE (MATRICULE, CIN, INVITATIONS, MULTI-APPS)
+
+> **Statut**: Spécification produit V2 — complète la vision Phases 9–11 sans remplacer D09 (hr_workers vs workers).  
+> **Contexte**: Besoin exprimé — le **matricule** et le **profil métier** doivent rester **cohérents** pour la même personne physique lors des changements d’opérateur ERP, de société, ou entre **BERAMETHODE**, **BERAOUVIER** et d’**autres programmes** du même écosystème ; la **carte nationale (CIN)** ne doit pas « emprunter » l’identité d’un autre ; les **admins** doivent pouvoir **inviter** un salarié déjà connu (CIN / nom / matricule historique) avec **acceptation** ou **refus**.
+
+### 23.1 Terminologie (à ne pas confondre)
+
+| Concept | Rôle V1 (actuel) | Rôle V2 cible |
+|---------|------------------|---------------|
+| **`hr_workers.id` / `workers.id`** | Identifiant technique **par base** (UUID/texte local) | Inchangé côté tenant ; reste la clé primaire **dans une instance** |
+| **Matricule** | Numéro **métier visible** ; unique par `owner_id` (usine) | Reste le numéro **affiché en interne** à l’usine ; peut être réattribué **par politique locale** si l’usine le décide |
+| **CIN** | Identifiant civil **fort** ; unique global dans `hr_workers` (spec) | Sert de **clé de rapprochement** pour invitations et fusion contrôlée |
+| **`person_id` (à introduire V2)** | *Absent V1* | Identifiant **plateforme** stable : une **personne physique** = un `person_id`, partagé entre sociétés autorisées et entre apps (BERAMETHODE, BERAOUVIER, etc.) |
+
+**Règle d’or V2**: Le salarié « voit » un **parcours continu** (profil, historique de pointage agrégé autorisé) rattaché à **`person_id`** ; chaque usine garde ses **matricules** et données **contractuelles / paie** rattachées à un enregistrement `hr_workers` **lié** à ce `person_id`.
+
+### 23.2 Problèmes à éviter (déjà identifiés en atelier)
+
+1. **Confusion matricule = identité nationale** — Le matricule est **interne entreprise** ; la CIN est **nationale**. Ne pas utiliser la seule CIN comme matricule affiché sans cadre RH.
+2. **Changement de société** — Un salarié qui rejoint une **autre usine** du groupe ne doit pas écraser la fiche d’un homonyme ; toute **fusion** (même CIN) = **action admin explicite** + journal d’audit.
+3. **Multi-programmes** — Une partie des règles vit dans **BERAMETHODE** (données opérationnelles, paie, planning) ; **BERAOUVIER** (consultation / actions ouvrier) ; **BERA MASTER** ou service d’identité (futur) pour **`person_id`**, invitations cross-tenant, licences. Les **deux autres programmes** mentionnés hors repo seront détaillés dans une annexe quand le périmètre sera figé.
+
+### 23.3 Flux cible : invitation & rattachement
+
+```
+[Admin usine] Recherche (CIN | nom | ancien matricule | email tel)
+       → Proposition de rattachement (person_id existant OU création)
+       → [Notification] → [Salarié] Accepte / Refuse
+       → Si accepté : lien hr_workers (tenant) ↔ person_id ; matricule local assigné
+       → Si refus : aucune donnée sensible partagée ; invitation annulée
+```
+
+- **Acceptation** / **refus** tracés (horodatage, IP/app si disponible).
+- **Salarié sans compte BERAOUVIER** : même flux via lien sécurisé ou première connexion CIN+PIN après validation RH.
+
+### 23.4 Cas : « licencié » d’une usine mais actif ailleurs
+
+- **Fin de contrat / radiation** sur le tenant A : `is_active = 0` **sur ce tenant uniquement** ; pas de suppression silencieuse du **`person_id`**.
+- Le salarié peut **continuer** à utiliser **BERAOUVIER** ou un **compte agrégé** (V2) pour voir l’historique **autorisé** et accepter une **nouvelle** invitation tenant B.
+- Les **données paie** restent **isolées par owner_id** (RLS / permissions).
+
+### 23.5 Tâches planifiées (à répartir sur Phases 9–11)
+
+| ID | Tâche | Phase suggérée | Implémentation (2026-04-26) |
+|----|--------|----------------|----------------------------|
+| T23.1 | Modèle de données : `platform_person` + `hr_worker_person` + backfill au démarrage | 10–11 | **Fait** — `server/db.ts` ; liaison après chaque `POST /api/hr/workers` |
+| T23.2 | API invitation : création, liste, accept/refuse (lien magique) | 9–10 | **Partiel** — `GET/POST /api/hr/invitations`, `POST /api/hr/invitations/respond`, `GET /api/hr/invitations/preview/:token` (`server/hrIdentityController.ts`) ; pas d’email |
+| T23.3 | CIN doublon : pas de fusion auto | 10 | **Fait** — `saveHRWorker` → `409` + `code: CIN_DUPLICATE` ; option `link_person_id` sur enregistrement |
+| T23.4 | BERAOUVIER : `person_id` + PIN | 9 | **Fait (V1)** — `POST /api/hr/workers/:id/pin` (admin) ; `POST /api/worker/:cin/pin-verify` (public limité) ; `has_pin` sur `GET /api/worker/:cin` ; UI PIN dans Effectifs + dossier |
+| T23.5 | Annexe 3 applications | Hors sprint | **Fait** — voir §23.7 |
+
+### 23.7 Annexe — Périmètre des trois piliers logiciels (BERA)
+
+| Pilier | Rôle principal | Données clés | Repo / déploiement |
+|--------|------------------|--------------|-------------------|
+| **BERAMETHODE** | ERP atelier : planning, magasin, suivi, RH complet, facturation locale, identité `person_id` + invitations | `owner_id`, `hr_*`, métier textile | Ce dépôt — port 8000 (V1 local) |
+| **BERAOUVIER** | Self-service ouvrier : profil non financier, pointage du jour, prod du jour ; auth **CIN + PIN** contre ce backend | Lecture via `/api/worker/*` ; `pin_hash` sur `hr_workers` | Dépôt séparé (Phase 9 plan) — consomme les mêmes API |
+| **BERA MASTER** (futur) | Multi-usines, licences, supervision ; éventuellement annuaire `person_id` fédéré en V2 cloud | Agrégats cross-tenant, pas les secrets PIN | Hors ce repo — Supabase / SaaS (Phase 10–11) |
+
+Les « deux autres programmes » hors BERAMETHODE sont donc **BERAOUVIER** (app ouvrier) et **BERA MASTER** (super-admin cloud). Toute autre application métier doit s’aligner sur `person_id` + contrats d’API documentés ici.
+
+### 23.6 Alignement avec l’existant (V1)
+
+- Aujourd’hui : `UNIQUE(owner_id, matricule)` sur `workers` ; pointage et skills sont liés à **`worker_id` / `hr_workers.id` local**.
+- La Section 23 **ne impose pas** de migration immédiate en V1 ; elle **fige la direction** pour que les développements Phase 5–9 **n’empêchent pas** l’introduction de `person_id` (champs nullable, export JSON, etc.).
 
 ---
 

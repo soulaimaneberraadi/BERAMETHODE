@@ -74,6 +74,12 @@ const MaterialsList: React.FC<MaterialsListProps> = ({
         const updatedMagasin = [newItem, ...magasinData];
         setMagasinData(updatedMagasin);
         localStorage.setItem('beramethode_magasin', JSON.stringify(updatedMagasin));
+        // Also sync to server
+        fetch('/api/magasin/products', {
+            method: 'POST', credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...newItem, reference: newItem.reference || newItem.id, designation: newItem.nom }),
+        }).catch(() => {});
 
         // Update current row in Cost Calculator
         if (quickAddTargetRow !== null) {
@@ -98,14 +104,35 @@ const MaterialsList: React.FC<MaterialsListProps> = ({
     };
 
     useEffect(() => {
-        try {
-            const data = localStorage.getItem('beramethode_magasin');
-            if (data) {
-                setMagasinData(JSON.parse(data));
-            }
-        } catch (e) {
-            console.error(e);
-        }
+        // Try server first, fall back to localStorage for guest mode
+        fetch('/api/magasin/products', { credentials: 'include' })
+            .then(r => r.ok ? r.json() : null)
+            .then(data => {
+                if (Array.isArray(data) && data.length > 0) {
+                    setMagasinData(data.map((p: any) => ({
+                        id: p.id,
+                        nom: p.designation || p.nom || '',
+                        designation: p.designation || p.nom || '',
+                        reference: p.reference,
+                        prixUnitaire: p.prixUnitaire,
+                        stockActuel: p.stockActuel,
+                        stockAlerte: p.stockAlerte,
+                        unite: p.unite,
+                        categorie: p.categorie,
+                        fournisseurNom: p.fournisseurNom,
+                        image: p.photo,
+                    })));
+                } else {
+                    const ls = localStorage.getItem('beramethode_magasin');
+                    if (ls) setMagasinData(JSON.parse(ls));
+                }
+            })
+            .catch(() => {
+                try {
+                    const ls = localStorage.getItem('beramethode_magasin');
+                    if (ls) setMagasinData(JSON.parse(ls));
+                } catch {}
+            });
     }, []);
 
     return (

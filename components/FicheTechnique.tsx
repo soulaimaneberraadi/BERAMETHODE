@@ -29,7 +29,8 @@ import {
     LayoutGrid,
     Loader2
 } from 'lucide-react';
-import { FicheData } from '../types';
+import { FicheData, AppSettings } from '../types';
+import DateTimePicker from './ui/DateTimePicker';
 import { TEXTILE_COLORS, TEXTILE_FABRICS } from '../data/textileData';
 import ExcelInput from './ExcelInput';
 import { compressImage } from '../utils';
@@ -105,6 +106,8 @@ interface FicheTechniqueProps {
     onSectionSplitChange?: (enabled: boolean) => void;
     lang?: 'fr' | 'ar';
     articleNameError?: boolean;
+    /** Calendrier Planning (jours ouvrés / exceptions) — phase 0 DateTimePicker */
+    settings: AppSettings;
 }
 
 export default function FicheTechnique({
@@ -123,7 +126,8 @@ export default function FicheTechnique({
     onNext,
     onSectionSplitChange,
     lang = 'fr',
-    articleNameError
+    articleNameError,
+    settings,
 }: FicheTechniqueProps) {
 
     const ft = FICHE_LABELS[lang];
@@ -459,27 +463,55 @@ export default function FicheTechnique({
                                 </div>
                             </div>
 
+                            {/* Suivi metadata: Todm / Kisba / Hala */}
+                            <div className="space-y-1 md:col-span-2">
+                                <label className="text-xs font-bold text-slate-400 uppercase ml-1">Suivi (Todm / Kisba / Hala)</label>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <input
+                                        type="text"
+                                        value={data.todm || ''}
+                                        onChange={(e) => handleChange('todm', e.target.value)}
+                                        placeholder="Todm (ex: 60%)"
+                                        className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                    />
+                                    <select
+                                        value={data.kisba || ''}
+                                        onChange={(e) => handleChange('kisba', e.target.value)}
+                                        className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                    >
+                                        <option value="">Kisba…</option>
+                                        <option value="COUPE">Coupé</option>
+                                        <option value="EN_COURS">En cours</option>
+                                        <option value="NON_LANCE">Non lancé</option>
+                                        <option value="AUTRE">Autre</option>
+                                    </select>
+                                    <select
+                                        value={data.hala || ''}
+                                        onChange={(e) => handleChange('hala', e.target.value)}
+                                        className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                                    >
+                                        <option value="">Hala…</option>
+                                        <option value="EN_COURS">En cours</option>
+                                        <option value="TERMINE">Terminé</option>
+                                        <option value="EN_ATTENTE">En attente</option>
+                                        <option value="BLOQUE">Bloqué</option>
+                                    </select>
+                                </div>
+                            </div>
+
                             <div className="space-y-1 md:col-span-2">
                                 <label className="text-xs font-bold text-slate-400 uppercase ml-1">{ft.launchTitle}</label>
                                 <div className="flex flex-col sm:flex-row gap-2">
-                                    <div className="flex flex-1 min-w-0 items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 focus-within:ring-2 focus-within:ring-indigo-100 focus-within:border-indigo-400 transition-all">
-                                        <div className="relative group shrink-0">
-                                            <div className="p-1.5 bg-white rounded-lg text-indigo-500 shadow-sm border border-indigo-100 group-hover:bg-indigo-50 transition-colors pointer-events-none">
-                                                <Calendar className="w-4 h-4" />
-                                            </div>
-                                            <input
-                                                type="date"
-                                                value={data.date}
-                                                onChange={(e) => handleChange('date', e.target.value)}
-                                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                                                title={ft.chooseDate}
-                                            />
+                                    <div className="flex flex-1 min-w-0 items-center gap-3 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus-within:ring-2 focus-within:ring-indigo-100 focus-within:border-indigo-400 transition-all">
+                                        <div className="shrink-0 p-1.5 bg-white rounded-lg text-indigo-500 shadow-sm border border-indigo-100 pointer-events-none" aria-hidden>
+                                            <Calendar className="w-4 h-4" />
                                         </div>
-                                        <input
-                                            type="date"
-                                            value={data.date}
-                                            onChange={(e) => handleChange('date', e.target.value)}
-                                            className="w-full min-w-0 bg-transparent text-sm font-bold text-slate-700 outline-none placeholder:text-slate-300 font-mono date-input-modern"
+                                        <DateTimePicker
+                                            value={data.date || ''}
+                                            onChange={(iso) => handleChange('date', iso.split('T')[0])}
+                                            mode="date"
+                                            settings={settings}
+                                            inputClassName="w-full min-w-0 border-0 bg-transparent shadow-none text-sm font-bold text-slate-700 outline-none focus:ring-0 py-0 px-0 font-mono"
                                         />
                                     </div>
                                     <div

@@ -4,7 +4,9 @@ import {
     AlertTriangle, Phone, Mail, Building2, LinkIcon, Layers, History, Barcode,
     Download, Filter, Activity, TrendingUp, TrendingDown, AlignLeft, Scale, RefreshCw, CheckCircle, MapPin, Sparkles, Power, FileText, Send, Printer, Recycle, ArrowLeft, Paperclip, Settings, ChevronDown, Eye, EyeOff, Image, Briefcase, Hash, Type, Table, FileSignature, Stamp, LayoutGrid
 } from 'lucide-react';
-import { ModelData, PlanningEvent, DemandeAppro, MouvementStock } from '../types';
+import { ModelData, PlanningEvent, DemandeAppro, MouvementStock, AppSettings } from '../types';
+import DateTimePicker from './ui/DateTimePicker';
+import { DEFAULT_CALENDAR_APP_SETTINGS } from '../lib/defaultCalendarSettings';
 import ProductDetailPanel from './ProductDetailPanel';
 
 export interface MagasinProps {
@@ -13,6 +15,8 @@ export interface MagasinProps {
     setDemandes?: React.Dispatch<React.SetStateAction<DemandeAppro[]>>;
     planningEvents?: PlanningEvent[];
     lang?: 'fr' | 'ar' | 'en';
+    /** Phase 0 — calendrier unifié (bons de commande, etc.) */
+    settings?: AppSettings;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -245,7 +249,19 @@ function ProductModal({ item, onSave, onClose }: { item?: MagasinProduct; onSave
 // ══════════════════════════════════════════════════════════════════════════════
 //  BON DE COMMANDE MODAL
 // ══════════════════════════════════════════════════════════════════════════════
-function BonCommandeModal({ bc: initial, products, onSave, onClose }: { bc: BonCommande; products: MagasinProduct[]; onSave: (bc: BonCommande) => void; onClose: () => void; }) {
+function BonCommandeModal({
+    bc: initial,
+    products,
+    settings,
+    onSave,
+    onClose,
+}: {
+    bc: BonCommande;
+    products: MagasinProduct[];
+    settings: AppSettings;
+    onSave: (bc: BonCommande) => void;
+    onClose: () => void;
+}) {
     const [bc, setBc] = useState<BonCommande>({ ...initial });
     const [addPid, setAddPid] = useState('');
     const [addQty, setAddQty] = useState('');
@@ -277,7 +293,16 @@ function BonCommandeModal({ bc: initial, products, onSave, onClose }: { bc: BonC
                 <div className="p-6 overflow-y-auto flex-1 space-y-6 bg-slate-50/50">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-white p-4 border rounded-2xl shadow-sm">
                         <div><Lbl t="Fournisseur" /><input className={inp} value={bc.fournisseurNom} onChange={e => setBc({ ...bc, fournisseurNom: e.target.value })} /></div>
-                        <div><Lbl t="Date Prévue" /><input type="date" className={inp} value={bc.dateLivraisonPrevue || ''} onChange={e => setBc({ ...bc, dateLivraisonPrevue: e.target.value })} /></div>
+                        <div>
+                            <Lbl t="Date Prévue" />
+                            <DateTimePicker
+                                value={bc.dateLivraisonPrevue || ''}
+                                onChange={(iso) => setBc({ ...bc, dateLivraisonPrevue: iso.split('T')[0] })}
+                                mode="date"
+                                settings={settings}
+                                inputClassName={inp}
+                            />
+                        </div>
                         <div><Lbl t="Statut" /><select className={inp} value={bc.statut} onChange={e => setBc({ ...bc, statut: e.target.value as any })}><option value="brouillon">Brouillon</option><option value="envoye">Envoyé</option><option value="valide">Validé/Approuvé</option><option value="livre">Livré totalement</option></select></div>
                     </div>
 
@@ -664,7 +689,7 @@ function InvoiceSettingsModal({ template, onSave, onClose }: { template: Invoice
                                             <div className="space-y-3">
                                                  <div>
                                                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><Briefcase className="w-3 h-3" /> Raison Sociale <span className="text-rose-400">*</span></label>
-                                                    <input className={invInp} value={s.raisonSociale} onChange={e => setS(p => ({ ...p, raisonSociale: e.target.value }))} placeholder="Ex: MBERATEX SARL" />
+                                                    <input className={invInp} value={s.raisonSociale} onChange={e => setS(p => ({ ...p, raisonSociale: e.target.value }))} placeholder="Ex: BERAMETHODE SARL" />
                                                 </div>
                                                 <div>
                                                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1"><MapPin className="w-3 h-3" /> Adresse</label>
@@ -1420,8 +1445,9 @@ function CustomProductSelect({ value, onChange, products, lots, t }: any) {
 // ══════════════════════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ══════════════════════════════════════════════════════════════════════════════
-export default function Magasin({ models = [], planningEvents = [], lang = 'fr' }: MagasinProps) {
+export default function Magasin({ models = [], planningEvents = [], lang = 'fr', settings }: MagasinProps) {
     const t = (str: string) => lang === 'fr' ? str : (DICT[str]?.[lang] || str);
+    const dtpSettings = settings ?? DEFAULT_CALENDAR_APP_SETTINGS;
 
     const [tab, setTab] = useState<'dashboard' | 'db' | 'bureau' | 'demandes' | 'commandes' | 'alertes' | 'inventaire' | 'tracabilite' | 'wms' | 'fournisseurs' | 'valorisation'>('dashboard');
     const [products, setProducts] = useState<MagasinProduct[]>([]);
@@ -3039,6 +3065,7 @@ export default function Magasin({ models = [], planningEvents = [], lang = 'fr' 
                 <BonCommandeModal
                     bc={bcModal.item}
                     products={products}
+                    settings={dtpSettings}
                     onSave={bc => { setCommandes(prev => prev.find(x => x.id === bc.id) ? prev.map(x => x.id === bc.id ? bc : x) : [bc, ...prev]); setBcModal({ open: false }); }}
                     onClose={() => setBcModal({ open: false })}
                 />

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Lock, Mail, User, Github, Chrome, ArrowRight, Sun, Moon } from 'lucide-react';
+import { notifyServerSessionEstablished } from '../../lib/dataIdentity';
+import { Lock, Mail, User, ArrowRight, Sun, Moon } from 'lucide-react';
 import { motion, AnimatePresence, Variants } from 'framer-motion';
 
-export default function Signup({ onSwitch }: { onSwitch: () => void }) {
+export default function Signup({ onSwitch, onGuest }: { onSwitch: () => void; onGuest?: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -42,6 +43,7 @@ export default function Signup({ onSwitch }: { onSwitch: () => void }) {
         throw new Error(data.message || 'Registration failed');
       }
 
+      notifyServerSessionEstablished(data.user?.id ?? 0);
       login(data.user);
     } catch (err: any) {
       setError(err.message);
@@ -250,11 +252,34 @@ export default function Signup({ onSwitch }: { onSwitch: () => void }) {
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
               <>
-                Sign up <ArrowRight className="w-4 h-4" />
+                Créer le compte <ArrowRight className="w-4 h-4" />
               </>
             )}
           </motion.button>
 
+          {onGuest && (
+            <motion.div variants={itemVariants} className="mt-2">
+              <div className="flex items-center gap-3 mb-4">
+                <div className={`h-px flex-1 ${isDark ? 'bg-slate-700/50' : 'bg-slate-200'}`} />
+                <span className={`text-xs font-medium uppercase tracking-wider ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Ou</span>
+                <div className={`h-px flex-1 ${isDark ? 'bg-slate-700/50' : 'bg-slate-200'}`} />
+              </div>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                type="button"
+                onClick={onGuest}
+                className={`w-full flex justify-center items-center gap-2 py-3.5 px-4 border rounded-xl text-sm font-medium focus:outline-none transition-all duration-200 ${
+                  isDark
+                    ? 'border-slate-700 bg-slate-800/30 text-slate-300 hover:text-white hover:border-slate-600'
+                    : 'border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:border-slate-300 shadow-sm'
+                }`}
+              >
+                <User className="w-4 h-4" />
+                Continuer en tant qu'invité
+              </motion.button>
+            </motion.div>
+          )}
 
         </form>
         
@@ -275,7 +300,7 @@ export default function Signup({ onSwitch }: { onSwitch: () => void }) {
           </p>
         </motion.div>
       </motion.div>
-      
+
       {/* Footer Copyright */}
       <div className="absolute bottom-6 text-center w-full z-10">
          <p className={`text-xs font-medium transition-colors duration-500 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>© {new Date().getFullYear()} BeraMethode. All rights reserved.</p>

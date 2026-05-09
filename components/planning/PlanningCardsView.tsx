@@ -90,7 +90,7 @@ export default function PlanningCardsView({
                                 {ev.strictDeadline_DDS && (
                                     <div className="flex justify-between border-t border-gray-800/50 pt-2 mt-2">
                                         <span className="flex items-center gap-1.5 text-xs"><Clock className="w-3 h-3" /> DDS</span>
-                                        <span className="text-xs font-bold text-amber-400">{ev.strictDeadline_DDS}</span>
+                                        <span className="text-xs font-bold text-amber-500">{ev.strictDeadline_DDS}</span>
                                     </div>
                                 )}
                             </div>

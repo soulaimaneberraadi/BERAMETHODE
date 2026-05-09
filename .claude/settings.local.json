@@ -12,7 +12,24 @@
       "Bash(powershell -Command \"Set-Location 'C:\\\\Users\\\\HP\\\\3D Objects\\\\BERAMETHODE'; git status\")",
       "Bash(powershell -Command ':*)",
       "Bash(powershell -Command \"Set-Location 'C:\\\\Users\\\\HP\\\\3D Objects\\\\BERAMETHODE'; git push -u origin master 2>&1\")",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "WebFetch(domain:claude.ai)",
+      "Bash(npx tsc *)",
+      "Bash(git -C \"C:/Users/HP/3D Objects/BERAMETHODE\" status --short)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8000/)",
+      "Bash(npm run *)",
+      "Bash(findstr \":8000\")",
+      "Bash(node -e ' *)",
+      "Bash(taskkill /PID 15804 /F)",
+      "PowerShell(Stop-Process -Id 15804 -Force)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8000)",
+      "Bash(curl -s http://localhost:8000/)",
+      "Bash(python3 -c ' *)",
+      "Bash(npx tsx *)",
+      "Bash(kill %1)",
+      "Bash(npm install *)"
     ]
   }
 }
