@@ -702,7 +702,7 @@ export default function Login({ onSwitch, onGuest }: { onSwitch: () => void, onG
 
       {/* Footer Copyright */}
       <div className="absolute bottom-6 text-center w-full z-10">
-         <p className={`text-xs font-medium transition-colors duration-500 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>© {new Date().getFullYear()} BeraMethode — AJANIF TEX. Tous droits réservés.</p>
+         <p className={`text-xs font-medium transition-colors duration-500 ${isDark ? 'text-slate-600' : 'text-slate-400'}`}>© {new Date().getFullYear()} BeraMethode. Tous droits réservés.</p>
       </div>
     </div>
   );
