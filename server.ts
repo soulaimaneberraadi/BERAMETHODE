@@ -66,7 +66,7 @@ import { postAnalyzeTextile, postSuggestVocabulary, postGenerateOperations } fro
 
 async function startServer() {
   const app = express();
-  const PORT = 8000;
+  const PORT = parseInt(process.env.PORT || '8000', 10);
 
   if (shouldUseHelmet()) {
     app.use(helmet());
@@ -372,6 +372,9 @@ async function startServer() {
     }
     res.json({ addresses, port: PORT });
   });
+
+  // Health check for Railway
+  app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
   // Toute requête /api non gérée ci-dessus : JSON 404 (évite que Vite ou express.static renvoient du HTML → erreur « Unexpected token '<' » côté client).
   app.use('/api', (req, res) => {

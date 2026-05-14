@@ -8,7 +8,7 @@
     "dev:app": "tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server.js",
+    "start": "npx tsx server.ts",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
