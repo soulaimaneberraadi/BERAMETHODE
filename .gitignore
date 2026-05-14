@@ -36,3 +36,10 @@ dist-ssr
 
 # Build artifacts
 beramethode.zip
+
+# Antigravity skills & temp files (never commit)
+%TEMP%/
+scratch/
+
+# Old Python scripts
+*.py
