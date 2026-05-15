@@ -69,7 +69,27 @@ async function startServer() {
   const PORT = parseInt(process.env.PORT || '8000', 10);
 
   if (shouldUseHelmet()) {
-    app.use(helmet());
+    app.use(
+      helmet({
+        contentSecurityPolicy: {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: [
+              "'self'",
+              "'unsafe-inline'",
+              "'unsafe-eval'",
+              'https://cdn.tailwindcss.com',
+              'https://cdnjs.cloudflare.com',
+            ],
+            styleSrc: ["'self'", "'unsafe-inline'", 'https:'],
+            fontSrc: ["'self'", 'https:', 'data:'],
+            imgSrc: ["'self'", 'data:', 'https:'],
+            connectSrc: ["'self'", 'https:'],
+          },
+        },
+        crossOriginEmbedderPolicy: false,
+      })
+    );
   }
 
   const isProd = process.env.NODE_ENV === 'production';
